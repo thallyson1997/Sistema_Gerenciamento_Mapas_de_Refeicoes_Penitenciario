@@ -289,7 +289,17 @@
                                 </div>
                                 <div>
                                     <strong>Contrato:</strong><br>
-                                    <span>{{ lote.contrato }} - {{ lote.data_inicio_contrato }}</span>
+                                    <span>{{ lote.contrato }} - {% if lote.data_inicio_contrato %}
+                                        {% set dt = lote.data_inicio_contrato|string %}
+                                        {% if dt|length >= 10 and '-' in dt %}
+                                            {% set parts = dt.split(' ')[0].split('-') %}
+                                            {{ parts[2] }}/{{ parts[1] }}/{{ parts[0] }}
+                                        {% else %}
+                                            {{ lote.data_inicio_contrato }}
+                                        {% endif %}
+                                    {% else %}
+                                        N/A
+                                    {% endif %}</span>
                                 </div>
                                 <div>
                                     <strong>Unidades Ativas:</strong><br>
@@ -1256,7 +1266,8 @@
         let filtrosAtivos = {
             dataInicio: null,
             dataFim: null,
-            unidadesSelecionadas: []
+            // null => no unit filter (show all). Array => explicit selection (can be empty => show none)
+            unidadesSelecionadas: null
         };
         
         // Converter dados dos mapas para formato da tabela
@@ -1306,8 +1317,8 @@
             console.log('Filtros ativos:', filtrosAtivos);
             console.log('Dados originais total:', dadosOriginais.length);
             
-            // Se não há filtros ativos, mostrar todos os dados
-            if (!filtrosAtivos.dataInicio && !filtrosAtivos.dataFim && filtrosAtivos.unidadesSelecionadas.length === 0) {
+            // Se não há filtros ativos (nenhum período e sem filtro de unidades), mostrar todos os dados
+            if (!filtrosAtivos.dataInicio && !filtrosAtivos.dataFim && filtrosAtivos.unidadesSelecionadas === null) {
                 console.log('Nenhum filtro ativo - mostrando todos os dados');
                 dadosOriginais.forEach(registro => {
                     dadosRefeicoes.push({...registro});
@@ -1337,23 +1348,29 @@
                         }
                     }
                     
-                    // Filtro por unidades - aplicar apenas se há filtro ativo
-                    if (filtrosAtivos.unidadesSelecionadas.length > 0) {
-                        const unidadeIncluida = filtrosAtivos.unidadesSelecionadas.some(unidadeSelecionada => {
-                            // Comparar nomes completos das unidades (exact match ou contains)
-                            const nomeRegistro = registro.unidade.toLowerCase().trim();
-                            const nomeSelecionado = unidadeSelecionada.toLowerCase().trim();
-                            
-                            // console.log('Comparando:', nomeRegistro, 'vs', nomeSelecionado);
-                            
-                            // Exact match ou contains
-                            return nomeRegistro === nomeSelecionado || 
-                                   nomeRegistro.includes(nomeSelecionado) ||
-                                   nomeSelecionado.includes(nomeRegistro);
-                        });
-                        
-                        if (!unidadeIncluida) {
+                    // Filtro por unidades - três estados:
+                    // - filtrosAtivos.unidadesSelecionadas === null => sem filtro (aceita todas)
+                    // - Array with length > 0 => filtrar apenas pelas selecionadas
+                    // - Array with length === 0 => usuário selecionou explicitamente nenhuma unidade -> não incluir
+                    if (Array.isArray(filtrosAtivos.unidadesSelecionadas)) {
+                        if (filtrosAtivos.unidadesSelecionadas.length === 0) {
+                            // Nenhuma unidade explicitamente selecionada -> excluir todos
                             incluir = false;
+                        } else {
+                            const unidadeIncluida = filtrosAtivos.unidadesSelecionadas.some(unidadeSelecionada => {
+                                // Comparar nomes completos das unidades (exact match ou contains)
+                                const nomeRegistro = registro.unidade.toLowerCase().trim();
+                                const nomeSelecionado = unidadeSelecionada.toLowerCase().trim();
+
+                                // Exact match ou contains
+                                return nomeRegistro === nomeSelecionado || 
+                                       nomeRegistro.includes(nomeSelecionado) ||
+                                       nomeSelecionado.includes(nomeRegistro);
+                            });
+
+                            if (!unidadeIncluida) {
+                                incluir = false;
+                            }
                         }
                     }
                     
@@ -1378,7 +1395,8 @@
             // Reset filtros ativos - limpar completamente para mostrar todos os dados
             filtrosAtivos.dataInicio = null;
             filtrosAtivos.dataFim = null;
-            filtrosAtivos.unidadesSelecionadas = [];
+            // null = sem filtro (mostrar todas). [] = explicitamente nenhuma selecionada
+            filtrosAtivos.unidadesSelecionadas = null;
             
             // Reset inputs de data
             document.getElementById('data-inicio').value = '';
@@ -3115,8 +3133,8 @@
                 checkbox.checked = true;
             });
             
-            // Definir unidades nos filtros ativos - começar com todas selecionadas (sem filtro)
-            filtrosAtivos.unidadesSelecionadas = [];
+            // Definir unidades nos filtros ativos - começar com todas selecionadas (sem filtro -> null)
+            filtrosAtivos.unidadesSelecionadas = null;
             atualizarDisplayUnidades();
             
             // Abrir popup de unidades
@@ -3154,10 +3172,11 @@
                 const unidadesSelecionadas = getUnidadesSelecionadas();
                 const totalCheckboxes = document.querySelectorAll('.unidade-checkbox').length;
                 
-                // Se todas as unidades estão selecionadas, limpar filtro (mostrar todas)
+                // Se todas as unidades estão selecionadas, limpar filtro (mostrar todas) -> usar null como sentinel
                 if (unidadesSelecionadas.length === totalCheckboxes) {
-                    filtrosAtivos.unidadesSelecionadas = [];
+                    filtrosAtivos.unidadesSelecionadas = null;
                 } else {
+                    // Pode ser array com 0 elementos (nenhuma selecionada) ou >0 (algumas selecionadas)
                     filtrosAtivos.unidadesSelecionadas = unidadesSelecionadas;
                 }
                 
