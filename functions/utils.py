@@ -128,6 +128,15 @@ def salvar_usuarios(usuarios):
 		ids.append(criar_documento('usuarios', usuario))
 	return ids
 
+# Função para salvar um mapa individualmente na coleção 'mapas' do Firestore
+def salvar_mapas(mapa):
+	"""
+	Salva um mapa na coleção 'mapas' do Firestore.
+	Garante que o campo 'id' será numérico e sequencial.
+	Retorna o id do documento salvo (como string).
+	"""
+	return criar_documento('mapas', mapa)
+
 def carregar_lotes():
 		lotes = ler_colecao('lotes')
 		for lote in lotes:

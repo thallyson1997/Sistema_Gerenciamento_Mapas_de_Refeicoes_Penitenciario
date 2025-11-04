@@ -200,8 +200,132 @@
         </div>
     </footer>
 
+    <!-- Modal Novo Lote -->
+    <div id="modal-novo-lote" style="display: none; position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(0,0,0,0.5); z-index: 2000;">
+        <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: white; border-radius: 16px; padding: 2rem; max-width: 480px; width: 90%; box-shadow: 0 8px 32px rgba(0,0,0,0.18);">
+            <h2 style="margin-bottom: 1.5rem; color: var(--primary-color);">Novo Lote Contratual</h2>
+            <form id="form-novo-lote" autocomplete="off">
+                <div style="display: flex; flex-direction: column; gap: 1rem; margin-bottom: 2rem;">
+                    <div>
+                        <label class="form-label" style="font-weight: 500;">Preços das Refeições (R$)</label>
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem;">
+                            <div>
+                                <label for="preco-cafe-interno" style="font-size: 0.95em;">Café Interno</label>
+                                <input type="number" step="0.01" min="0" id="preco-cafe-interno" name="preco_cafe_interno" class="form-input" placeholder="0,00" required style="width: 100%; padding: 0.4rem; border-radius: 6px; border: 1px solid var(--gray-300);">
+                            </div>
+                            <div>
+                                <label for="preco-cafe-funcionario" style="font-size: 0.95em;">Café Funcionário</label>
+                                <input type="number" step="0.01" min="0" id="preco-cafe-funcionario" name="preco_cafe_funcionario" class="form-input" placeholder="0,00" required style="width: 100%; padding: 0.4rem; border-radius: 6px; border: 1px solid var(--gray-300);">
+                            </div>
+                            <div>
+                                <label for="preco-almoco-interno" style="font-size: 0.95em;">Almoço Interno</label>
+                                <input type="number" step="0.01" min="0" id="preco-almoco-interno" name="preco_almoco_interno" class="form-input" placeholder="0,00" required style="width: 100%; padding: 0.4rem; border-radius: 6px; border: 1px solid var(--gray-300);">
+                            </div>
+                            <div>
+                                <label for="preco-almoco-funcionario" style="font-size: 0.95em;">Almoço Funcionário</label>
+                                <input type="number" step="0.01" min="0" id="preco-almoco-funcionario" name="preco_almoco_funcionario" class="form-input" placeholder="0,00" required style="width: 100%; padding: 0.4rem; border-radius: 6px; border: 1px solid var(--gray-300);">
+                            </div>
+                            <div>
+                                <label for="preco-lanche-interno" style="font-size: 0.95em;">Lanche Interno</label>
+                                <input type="number" step="0.01" min="0" id="preco-lanche-interno" name="preco_lanche_interno" class="form-input" placeholder="0,00" required style="width: 100%; padding: 0.4rem; border-radius: 6px; border: 1px solid var(--gray-300);">
+                            </div>
+                            <div>
+                                <label for="preco-lanche-funcionario" style="font-size: 0.95em;">Lanche Funcionário</label>
+                                <input type="number" step="0.01" min="0" id="preco-lanche-funcionario" name="preco_lanche_funcionario" class="form-input" placeholder="0,00" required style="width: 100%; padding: 0.4rem; border-radius: 6px; border: 1px solid var(--gray-300);">
+                            </div>
+                            <div>
+                                <label for="preco-jantar-interno" style="font-size: 0.95em;">Jantar Interno</label>
+                                <input type="number" step="0.01" min="0" id="preco-jantar-interno" name="preco_jantar_interno" class="form-input" placeholder="0,00" required style="width: 100%; padding: 0.4rem; border-radius: 6px; border: 1px solid var(--gray-300);">
+                            </div>
+                            <div>
+                                <label for="preco-jantar-funcionario" style="font-size: 0.95em;">Jantar Funcionário</label>
+                                <input type="number" step="0.01" min="0" id="preco-jantar-funcionario" name="preco_jantar_funcionario" class="form-input" placeholder="0,00" required style="width: 100%; padding: 0.4rem; border-radius: 6px; border: 1px solid var(--gray-300);">
+                            </div>
+                        </div>
+                    </div>
+                    <div>
+                        <label for="novo-lote-nome" class="form-label" style="font-weight: 500;">Nome do Lote</label>
+                        <input type="text" id="novo-lote-nome" name="nome_lote" class="form-input" placeholder="Digite o nome do lote" required style="width: 100%; padding: 0.5rem; border-radius: 6px; border: 1px solid var(--gray-300);">
+                    </div>
+                    <div>
+                        <label for="novo-lote-empresa" class="form-label" style="font-weight: 500;">Nome da Empresa</label>
+                        <input type="text" id="novo-lote-empresa" name="nome_empresa" class="form-input" placeholder="Digite o nome da empresa" required style="width: 100%; padding: 0.5rem; border-radius: 6px; border: 1px solid var(--gray-300);">
+                    </div>
+                    <div>
+                        <label for="novo-lote-contrato" class="form-label" style="font-weight: 500;">Número do Contrato</label>
+                        <input type="text" id="novo-lote-contrato" name="numero_contrato" class="form-input" placeholder="Digite o número do contrato" required style="width: 100%; padding: 0.5rem; border-radius: 6px; border: 1px solid var(--gray-300);">
+                    </div>
+                    <div>
+                        <label for="novo-lote-inicio" class="form-label" style="font-weight: 500;">Data de Início do Contrato</label>
+                        <input type="date" id="novo-lote-inicio" name="data_inicio" class="form-input" required style="width: 100%; padding: 0.5rem; border-radius: 6px; border: 1px solid var(--gray-300);">
+                    </div>
+                    <div>
+                        <label class="form-label" style="font-weight: 500;">Unidades do Lote</label>
+                        <div id="unidades-lista" style="display: flex; flex-direction: column; gap: 0.5rem;"></div>
+                        <input type="text" id="input-unidade" class="form-input" placeholder="Digite o nome da unidade e pressione Enter" style="width: 100%; padding: 0.5rem; border-radius: 6px; border: 1px solid var(--gray-300); margin-top: 0.5rem;">
+                        <small style="color: var(--gray-500);">Pressione Enter para adicionar cada unidade. Clique no X para remover.</small>
+                    </div>
+                </div>
+                <div style="display: flex; gap: 0.75rem; justify-content: flex-end;">
+                    <button type="button" id="btn-cancelar-novo-lote" class="btn btn-secondary">Cancelar</button>
+                    <button type="submit" id="btn-adicionar-novo-lote" class="btn btn-primary">Adicionar</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
     <script>
+        // Campo dinâmico de unidades do lote
+        function adicionarCampoUnidade(nome = "") {
+            const lista = document.getElementById('unidades-lista');
+            const div = document.createElement('div');
+            div.style.display = 'flex';
+            div.style.alignItems = 'center';
+            div.style.gap = '0.5rem';
+            div.className = 'unidade-item';
+            const input = document.createElement('input');
+            input.type = 'text';
+            input.className = 'form-input';
+            input.value = nome;
+            input.name = 'unidades[]';
+            input.placeholder = 'Nome da unidade';
+            input.required = true;
+            input.style.flex = '1';
+            input.style.padding = '0.5rem';
+            input.style.borderRadius = '6px';
+            input.style.border = '1px solid var(--gray-300)';
+            const btnRemover = document.createElement('button');
+            btnRemover.type = 'button';
+            btnRemover.textContent = '✖';
+            btnRemover.title = 'Remover unidade';
+            btnRemover.style.background = 'none';
+            btnRemover.style.border = 'none';
+            btnRemover.style.color = '#e53e3e';
+            btnRemover.style.fontSize = '1.1rem';
+            btnRemover.style.cursor = 'pointer';
+            btnRemover.addEventListener('click', function() {
+                lista.removeChild(div);
+            });
+            div.appendChild(input);
+            div.appendChild(btnRemover);
+            lista.appendChild(div);
+        }
+
         document.addEventListener('DOMContentLoaded', function() {
+            // Campo de adicionar unidade dinâmica
+            var inputUnidade = document.getElementById('input-unidade');
+            if (inputUnidade) {
+                inputUnidade.addEventListener('keydown', function(e) {
+                    if (e.key === 'Enter') {
+                        e.preventDefault();
+                        const nome = inputUnidade.value.trim();
+                        if (nome.length > 0) {
+                            adicionarCampoUnidade(nome);
+                            inputUnidade.value = '';
+                        }
+                    }
+                });
+            }
             // Verificar autenticação
             const usuarioSalvo = localStorage.getItem('sgmrp_usuario');
             if (!usuarioSalvo) {
@@ -249,11 +373,38 @@
                 limparFiltrosBtn.addEventListener('click', clearFilters);
             }
 
-            // Botão Novo Lote
+            // Botão Novo Lote - abrir modal
             var novoLoteBtn = document.getElementById('novoLote');
-            if (novoLoteBtn) {
+            var modalNovoLote = document.getElementById('modal-novo-lote');
+            var btnCancelarNovoLote = document.getElementById('btn-cancelar-novo-lote');
+            var btnAdicionarNovoLote = document.getElementById('btn-adicionar-novo-lote');
+            if (novoLoteBtn && modalNovoLote) {
                 novoLoteBtn.addEventListener('click', function() {
-                    alert('Funcionalidade de criação de novo lote será implementada em versões futuras.');
+                    modalNovoLote.style.display = 'block';
+                });
+            }
+            if (btnCancelarNovoLote && modalNovoLote) {
+                btnCancelarNovoLote.addEventListener('click', function() {
+                    modalNovoLote.style.display = 'none';
+                });
+            }
+            if (btnAdicionarNovoLote && modalNovoLote) {
+                // Substituir o submit padrão para não recarregar a página
+                var formNovoLote = document.getElementById('form-novo-lote');
+                if (formNovoLote) {
+                    formNovoLote.addEventListener('submit', function(e) {
+                        e.preventDefault();
+                        // Futuramente: lógica de adicionar lote
+                        modalNovoLote.style.display = 'none';
+                    });
+                }
+            }
+            // Fechar modal ao clicar fora do conteúdo
+            if (modalNovoLote) {
+                modalNovoLote.addEventListener('click', function(e) {
+                    if (e.target === modalNovoLote) {
+                        modalNovoLote.style.display = 'none';
+                    }
                 });
             }
 

@@ -18,9 +18,23 @@ def criar_documento(nome_colecao, dados):
     Retorna o ID do documento criado.
     """
     colecao_ref = db.collection(nome_colecao)
-    doc_ref = colecao_ref.document()
+    # Buscar todos os documentos existentes para encontrar o maior id
+    docs = colecao_ref.stream()
+    maior_id = -1
+    for doc in docs:
+        doc_dict = doc.to_dict()
+        try:
+            doc_id = int(doc_dict.get('id', -1))
+            if doc_id > maior_id:
+                maior_id = doc_id
+        except (ValueError, TypeError):
+            continue
+    novo_id = maior_id + 1
+    dados['id'] = novo_id
+    # O id do documento no Firestore também será o número, como string
+    doc_ref = colecao_ref.document(str(novo_id))
     doc_ref.set(dados)
-    return doc_ref.id
+    return str(novo_id)
 
 def ler_documento(nome_colecao, doc_id):
     """
