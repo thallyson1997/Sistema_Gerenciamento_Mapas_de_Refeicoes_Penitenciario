@@ -240,10 +240,10 @@
                     </a>
                 </div>
 
-                <div class="lote-grid">
+                <div class="lote-grid" style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 2rem;">
                     {% for lote in lotes %}
                     <!-- Lote {{ lote.id }} -->
-                    <a href="{{ url_for('lote_detalhes', lote_id=lote.id) }}" class="lote-card fade-in" data-lote-id="{{ lote.id }}">
+                    <a href="{{ url_for('lote_detalhes', lote_id=lote.id) }}" class="lote-card fade-in" data-lote-id="{{ lote.id }}" style="min-width:0;">
                         <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 1rem;">
                             <div>
                                 <h3 style="margin-bottom: 0.25rem;">{{ lote.nome }}</h3>
@@ -265,13 +265,11 @@
                                 {% if lote.ativo %}ATIVO{% else %}INATIVO{% endif %}
                             </div>
                         </div>
-                        
                         <div style="margin-bottom: 1rem;">
                             <p class="presidios-count" style="margin: 0;">
                                 <strong><span class="unidades-count" data-lote-id="{{ lote.id }}">{{ lote.unidades | length }}</span> unidades</strong> • {{ lote.empresa }}
                             </p>
                         </div>
-
                         <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; margin-bottom: 1rem;">
                             <div style="text-align: center;">
                                 <div style="font-size: 1.5rem;">🍽️</div>
@@ -295,11 +293,14 @@
                                 <div style="font-size: 0.75rem; opacity: 0.8;">Discrepâncias</div>
                             </div>
                         </div>
-
                         <div style="font-size: 0.75rem; opacity: 0.8;">
                             Última atualização: 19/10/2025
                         </div>
                     </a>
+                    {% endfor %}
+                    {% set lotes_faltando = 3 - (lotes|length % 3) if (lotes|length % 3) != 0 else 0 %}
+                    {% for i in range(lotes_faltando) %}
+                    <div style="visibility: hidden;"></div>
                     {% endfor %}
                 </div>
             </section>
