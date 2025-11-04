@@ -32,7 +32,8 @@ def calcular_conformidade_lote(lote, mapas=None):
 		]
 		for campo, preco in campos_precos:
 			valores = mapa.get(campo, [])
-			valor_total += sum(valores) * preco if valores else 0
+			valores_int = [int(v) if not isinstance(v, int) and str(v).isdigit() else v for v in valores]
+			valor_total += sum(valores_int) * preco if valores_int else 0
 		# Soma desvios SIISP multiplicados pelo preço (considera todos tipos)
 		n_siisp = mapa.get('n_siisp', [])
 		# Para desvio, soma todos os n_siisp multiplicados pelo preço médio das refeições
@@ -53,20 +54,24 @@ def calcular_conformidade_lote(lote, mapas=None):
 				elif 'jantar' in campo:
 					preco = precos.get('jantar', {}).get('interno' if 'interno' in campo else 'funcionario', 0)
 				if siisp_vals:
-					# Só soma excedentes positivos
-					valor_desvio += sum([v for v in siisp_vals if v > 0]) * preco
+					# Só soma excedentes positivos, garantindo int
+					siisp_vals_int = [int(v) if not isinstance(v, int) and str(v).isdigit() else v for v in siisp_vals]
+					valor_desvio += sum([v for v in siisp_vals_int if v > 0]) * preco
 		# Se não houver campos_siisp, soma n_siisp total multiplicado pelo preço médio
 		elif n_siisp:
 			precos_lista = [p for _, p in campos_precos if p > 0]
 			preco_medio = sum(precos_lista) / len(precos_lista) if precos_lista else 1
-			valor_desvio += sum(n_siisp) * preco_medio
+			n_siisp_int = [int(v) if not isinstance(v, int) and str(v).isdigit() else v for v in n_siisp]
+			valor_desvio += sum(n_siisp_int) * preco_medio
 	if valor_total > 0:
 		conformidade = ((valor_total - valor_desvio) / valor_total) * 100
 		return round(max(0, conformidade), 1)
 	return None
+
 def data_br_to_iso(d):
 	d = d.split('/')
 	return f"{d[2]}-{d[1].zfill(2)}-{d[0].zfill(2)}"
+
 def int_to_roman(num):
 	val = [1000, 900, 500, 400, 100, 90, 50, 40, 10, 9, 5, 4, 1]
 	syms = ['M', 'CM', 'D', 'CD', 'C', 'XC', 'L', 'XL', 'X', 'IX', 'V', 'IV', 'I']
@@ -78,6 +83,7 @@ def int_to_roman(num):
 			num -= val[i]
 		i += 1
 	return roman_num
+
 def filtro_mapa(m, lote_id, unidades_list, data_inicio, data_fim):
 	if m['lote_id'] != lote_id:
 		return False
@@ -96,29 +102,6 @@ def filtro_mapa(m, lote_id, unidades_list, data_inicio, data_fim):
 		if not any(data_inicio <= d <= data_fim for d in datas_iso):
 			return False
 	return True
-
-def carregar_dados_json(arquivo):
-	DADOS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'dados')
-	caminho = os.path.join(DADOS_DIR, arquivo)
-	try:
-		with open(caminho, 'r', encoding='utf-8') as f:
-			return json.load(f)
-	except FileNotFoundError:
-		return {}
-	except json.JSONDecodeError:
-		return {}
-
-def salvar_dados_json(arquivo, dados):
-	DADOS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'dados')
-	os.makedirs(DADOS_DIR, exist_ok=True)
-	caminho = os.path.join(DADOS_DIR, arquivo)
-	try:
-		with open(caminho, 'w', encoding='utf-8') as f:
-			json.dump(dados, f, ensure_ascii=False, indent=2)
-		return True
-	except Exception as e:
-		print(f"Erro ao salvar arquivo {arquivo}: {e}")
-		return False
 
 def carregar_usuarios():
 	"""
@@ -268,55 +251,6 @@ def processar_dados_siisp(texto_siisp, dias_esperados):
 	}
 	return resultado
 
-def migrar_dados_existentes():
-	try:
-		dados_teste = carregar_dados_json('mapas_teste.json')
-		if not dados_teste or 'registros' not in dados_teste or not dados_teste['registros']:
-			print("ℹ️ Nenhum dado de teste encontrado para migrar")
-			return True
-		print(f"🔄 Migrando {len(dados_teste['registros'])} registros de mapas_teste.json para mapas.json...")
-		dados_mapas = carregar_dados_json('mapas.json')
-		if 'mapas' not in dados_mapas:
-			dados_mapas['mapas'] = []
-		registros_migrados = 0
-		for registro in dados_teste['registros']:
-			ja_existe = any(
-				m.get('id') == registro.get('id') and 
-				m.get('nome_unidade') == registro.get('nome_unidade') and
-				m.get('mes') == registro.get('mes') and
-				m.get('ano') == registro.get('ano') and
-				m.get('lote_id') == registro.get('lote_id')
-				for m in dados_mapas['mapas']
-			)
-			if not ja_existe:
-				if 'data_criacao' in registro:
-					del registro['data_criacao']
-				dados_mapas['mapas'].append(registro)
-				registros_migrados += 1
-				print(f"   ✅ Migrado: {registro.get('nome_unidade')} - {registro.get('mes')}/{registro.get('ano')}")
-			else:
-				print(f"   ⚠️ Já existe: {registro.get('nome_unidade')} - {registro.get('mes')}/{registro.get('ano')}")
-		if registros_migrados > 0:
-			if salvar_dados_json('mapas.json', dados_mapas):
-				print(f"✅ {registros_migrados} registros migrados com sucesso!")
-				import os
-				caminho_teste = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'dados', 'mapas_teste.json')
-				try:
-					os.remove(caminho_teste)
-					print("🗑️ Arquivo mapas_teste.json removido com sucesso!")
-				except OSError:
-					print("⚠️ Não foi possível remover mapas_teste.json")
-				return True
-			else:
-				print("❌ Erro ao salvar dados migrados")
-				return False
-		else:
-			print("ℹ️ Nenhum registro novo para migrar")
-			return True
-	except Exception as e:
-		print(f"❌ Erro na migração: {e}")
-		return False
-
 def calcular_colunas_siisp(mapa):
 	n_siisp = mapa.get('n_siisp', [])
 	campos_base = [
@@ -340,19 +274,28 @@ def calcular_colunas_siisp(mapa):
 		campo_siisp = f"{campo}_siisp"
 		valores_originais = mapa.get(campo, [])
 		if valores_originais and len(valores_originais) == len(n_siisp):
-			diferencas = [valores_originais[i] - n_siisp[i] for i in range(len(n_siisp))]
+			valores_int = [int(v) if not isinstance(v, int) and str(v).isdigit() else v for v in valores_originais]
+			n_siisp_int = [int(v) if not isinstance(v, int) and str(v).isdigit() else v for v in n_siisp]
+			diferencas = [valores_int[i] - n_siisp_int[i] for i in range(len(n_siisp_int))]
 			mapa[campo_siisp] = diferencas
 		else:
 			mapa[campo_siisp] = []
 	return mapa
 
 def salvar_mapas_atualizados(mapas):
-	dados = {'mapas': mapas}
-	return salvar_dados_json('mapas.json', dados)
+	from .firestore_utils import db
+	colecao_ref = db.collection('mapas')
+	# Remove campo 'id' manual se existir
+	for mapa in mapas:
+		if 'id' in mapa:
+			del mapa['id']
+		# Salva cada registro como documento individual
+		doc_ref = colecao_ref.document()
+		doc_ref.set(mapa)
+	return True
 
 def carregar_mapas():
-	dados = carregar_dados_json('mapas.json')
-	mapas = dados.get('mapas', [])
+	mapas = ler_colecao('mapas')
 	mapas_atualizados = []
 	houve_alteracoes = False
 	for mapa in mapas:
@@ -369,11 +312,7 @@ def carregar_mapas():
 			if mapa_original.get(campo, []) != mapa_calculado.get(campo, []):
 				houve_alteracoes = True
 				break
-	if houve_alteracoes:
-		if salvar_mapas_atualizados(mapas_atualizados):
-			print("✅ Colunas SIISP calculadas e salvas automaticamente!")
-		else:
-			print("❌ Erro ao salvar colunas SIISP calculadas")
+	# Se houve alterações, pode salvar no Firestore se desejar
 	return mapas_atualizados
 
 def obter_unidades_do_lote(lote_id):
@@ -385,13 +324,13 @@ def obter_unidades_do_lote(lote_id):
 	return [u.get('nome') for u in unidades_do_lote]
 
 def obter_mapas_do_lote(lote_id, mes=None, ano=None):
-	mapas = carregar_mapas()
-	mapas_lote = [m for m in mapas if m['lote_id'] == lote_id]
-	if mes is not None:
-		mapas_lote = [m for m in mapas_lote if m['mes'] == mes]
-	if ano is not None:
-		mapas_lote = [m for m in mapas_lote if m['ano'] == ano]
-	return mapas_lote
+    mapas = carregar_mapas()
+    mapas_lote = [m for m in mapas if m.get('lote_id') == lote_id]
+    if mes is not None:
+        mapas_lote = [m for m in mapas_lote if m.get('mes') == mes]
+    if ano is not None:
+        mapas_lote = [m for m in mapas_lote if m.get('ano') == ano]
+    return mapas_lote
 
 def adicionar_usuario(dados_usuario):
 	"""

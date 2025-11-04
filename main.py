@@ -6,8 +6,6 @@ import json
 import calendar
 from datetime import datetime
 from functions.utils import (
-    carregar_dados_json,
-    salvar_dados_json,
     carregar_usuarios,
     salvar_usuarios,
     carregar_lotes,
@@ -15,7 +13,6 @@ from functions.utils import (
     gerar_datas_do_mes,
     processar_dados_tabulares,
     processar_dados_siisp,
-    migrar_dados_existentes,
     calcular_colunas_siisp,
     salvar_mapas_atualizados,
     carregar_mapas,
@@ -59,7 +56,7 @@ def exportar_tabela():
     unidades_list = unidades.split(',') if unidades else []
 
     # Carregar mapas do lote
-    mapas = carregar_dados_json('mapas.json').get('mapas', [])
+    mapas = carregar_mapas()
     lotes = carregar_lotes()
     lote = next((l for l in lotes if l['id'] == lote_id), None)
     precos = lote.get('precos', {}) if lote else {}
@@ -601,8 +598,6 @@ def exportar_tabela():
         download_name=nome_arquivo
     )
 
-# Dados simulados temporários (até criarmos os JSONs)
-
 # ===== ROTAS DA APLICAÇÃO =====
 
 @app.route('/')
@@ -1007,9 +1002,7 @@ def api_adicionar_dados():
             return jsonify({'error': 'Lote ID, mês e ano devem ser números'}), 400
         
         # Carregar dados existentes do arquivo mapas.json
-        dados_mapas = carregar_dados_json('mapas.json')
-        if 'mapas' not in dados_mapas:
-            dados_mapas['mapas'] = []
+        dados_mapas = {'mapas': carregar_mapas()}
         
         # Verificar se já existe registro para esta unidade, mês, ano e lote
         registro_existente_index = None
@@ -1123,7 +1116,7 @@ def api_adicionar_dados():
         dados_mapas['mapas'].append(novo_registro)
         
         # Salvar no arquivo mapas.json
-        if salvar_dados_json('mapas.json', dados_mapas):
+        if salvar_mapas_atualizados(dados_mapas['mapas']):
             print(f"✅ Dados salvos com sucesso em mapas.json:")
             print(f"   Lote ID: {lote_id}")
             print(f"   Mês: {mes}, Ano: {ano} ({dias_esperados} dias)")
@@ -1188,9 +1181,7 @@ def api_excluir_dados():
             return jsonify({'error': 'Lote ID, mês e ano devem ser números'}), 400
         
         # Carregar dados existentes do arquivo mapas.json
-        dados_mapas = carregar_dados_json('mapas.json')
-        if 'mapas' not in dados_mapas:
-            dados_mapas['mapas'] = []
+        dados_mapas = {'mapas': carregar_mapas()}
         
         # Procurar pelo registro específico para excluir
         registro_encontrado = None
@@ -1217,7 +1208,7 @@ def api_excluir_dados():
         dados_mapas['mapas'].pop(registro_index)
         
         # Salvar dados atualizados
-        sucesso_salvamento = salvar_dados_json('mapas.json', dados_mapas)
+        sucesso_salvamento = salvar_mapas_atualizados(dados_mapas['mapas'])
         
         if sucesso_salvamento:
             print(f"✅ Registro excluído com sucesso:")
@@ -1281,9 +1272,7 @@ def api_entrada_manual():
             return jsonify({'error': 'Lote ID, mês e ano devem ser números'}), 400
         
         # Carregar dados existentes do arquivo mapas.json
-        dados_mapas = carregar_dados_json('mapas.json')
-        if 'mapas' not in dados_mapas:
-            dados_mapas['mapas'] = []
+        dados_mapas = {'mapas': carregar_mapas()}
         
         # Verificar se já existe registro para esta unidade, mês, ano e lote
         registro_existente_index = None
@@ -1376,7 +1365,7 @@ def api_entrada_manual():
         dados_mapas['mapas'].append(novo_registro)
         
         # Salvar no arquivo mapas.json
-        if salvar_dados_json('mapas.json', dados_mapas):
+        if salvar_mapas_atualizados(dados_mapas['mapas']):
             print(f"✅ Entrada manual salva com sucesso em mapas.json:")
             print(f"   Lote ID: {lote_id}")
             print(f"   Mês: {mes}, Ano: {ano} ({dias_esperados} dias)")
@@ -1464,9 +1453,7 @@ def api_adicionar_siisp():
             }), 400
         
         # Carregar dados existentes do arquivo mapas.json
-        dados_mapas = carregar_dados_json('mapas.json')
-        if 'mapas' not in dados_mapas:
-            dados_mapas['mapas'] = []
+        dados_mapas = {'mapas': carregar_mapas()}
         
         # Procurar pelo registro específico para adicionar SIISP
         registro_encontrado = None
@@ -1677,10 +1664,6 @@ if __name__ == '__main__':
     print(f"📄 Templates: {os.path.join(BASE_DIR, 'templates')}")
     print(f"🎨 Arquivos estáticos: {os.path.join(BASE_DIR, 'static')}")
     print(f"💾 Dados JSON: {DADOS_DIR}")
-    
-    # Executar migração de dados se necessário
-    print("🔄 Verificando migração de dados...")
-    migrar_dados_existentes()
     
     print("🔗 Acesse: http://localhost:5000")
     print("📝 Cadastros de usuários salvos no Firestore (coleção 'usuarios')")
