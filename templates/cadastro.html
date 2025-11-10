@@ -481,15 +481,18 @@
                 }
                 
                 const data = await response.json();
-                
+
                 // Limpar loading
                 limparMensagemValidacao(e);
-                
+
+                // usar campo retornado pelo servidor se presente (ajuda em requisições concorrentes)
+                const responseCampo = data.campo || campo;
+
                 // Mostrar resultado
                 if (data.valido) {
-                    mostrarMensagemValidacao(campo, data.mensagem || 'Disponível!', 'success');
+                    mostrarMensagemValidacao(responseCampo, data.mensagem || 'Disponível!', 'success');
                 } else {
-                    mostrarMensagemValidacao(campo, data.mensagem, 'error');
+                    mostrarMensagemValidacao(responseCampo, data.mensagem, 'error');
                 }
                 
             } catch (error) {
