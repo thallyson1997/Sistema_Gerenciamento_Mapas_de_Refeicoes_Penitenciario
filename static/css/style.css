@@ -1078,3 +1078,44 @@ footer {
         display: none !important;
     }
 }
+
+/* === NOTIFICAÇÕES (toasts) === */
+.notification {
+    position: fixed;
+    top: 1rem;
+    right: 1rem;
+    z-index: 3000;
+    min-width: 280px;
+    max-width: 420px;
+    border-radius: 10px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+    overflow: hidden;
+    font-size: 0.95rem;
+}
+.notification .notification-content {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.8rem 1rem;
+}
+.notification .notification-icon {
+    font-size: 1.45rem;
+    width: 36px;
+    height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.notification .notification-text { flex: 1; }
+.notification .notification-close {
+    background: none;
+    border: none;
+    font-size: 1.1rem;
+    cursor: pointer;
+    color: inherit;
+}
+.notification-success { background-color: #f0fff4; color: #2f855a; border: 1px solid #9ae6b4; }
+.notification-error { background-color: #fed7d7; color: #c53030; border: 1px solid #feb2b2; }
+.notification-warning { background-color: #fffbeb; color: #d69e2e; border: 1px solid #faf089; }
+.notification-info { background-color: var(--light-blue); color: var(--primary-color); border: 1px solid #bee3f8; }
+.notification.closing { opacity: 0; transform: translateY(-8px); transition: all 0.25s ease; }

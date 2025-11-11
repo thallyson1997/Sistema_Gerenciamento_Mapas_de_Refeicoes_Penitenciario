@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, render_template, session, flash, redirect, url_for
+from flask import Flask, request, jsonify, render_template, session, flash, redirect, url_for, abort
 import os
 import json
 import re
@@ -10,24 +10,24 @@ from functions.utils import (
     validar_email,
     validar_telefone,
     validar_matricula,
-    validar_userna,
+    validar_username,
     validar_senha,
+    validar_login,
+    salvar_novo_lote,
+    _load_lotes_data,
+    _load_unidades_data
+    ,carregar_lotes_para_dashboard
 )
 
 app = Flask(__name__)
 app.secret_key = 'sgmrp_seap_2025_secret_key_desenvolvimento'
 app.config['DEBUG'] = True
 
+#FEITOS
 @app.route('/')
 def index():
     #Página inicial
     return render_template('index.html')
-
-
-@app.route('/login', methods=['GET', 'POST'])
-def login():
-    #Página de login
-    return render_template('login.html')
 
 @app.route('/cadastro', methods=['GET', 'POST'])
 def cadastro():
@@ -42,67 +42,13 @@ def cadastro():
             return jsonify(resp), (200 if resp.get('ok') else 400)
 
         if resp.get('ok'):
-            flash(resp.get('mensagem', 'Usuário cadastrado com sucesso'))
+            flash(resp.get('mensagem', 'Usuário cadastrado com sucesso. Aguarde a aprovação do seu cadastro.'))
             return redirect(url_for('login'))
         else:
             flash(resp.get('mensagem', 'Erro ao cadastrar usuário'))
             return render_template('cadastro.html', form_data=form_data, erro=resp.get('mensagem'))
 
     return render_template('cadastro.html')
-
-@app.route('/logout')
-def logout():
-    return jsonify({'ok': True})
-
-@app.route('/dashboard')
-def dashboard():
-    return jsonify({'ok': True})
-
-
-@app.route('/lotes')
-def lotes():
-    return jsonify({'ok': True})
-
-
-@app.route('/lote/<int:lote_id>')
-def lote_detalhes(lote_id):
-    return jsonify({'ok': True})
-
-
-@app.route('/admin/usuarios')
-def admin_usuarios():
-    return jsonify({'ok': True})
-
-
-@app.route('/admin/usuarios/<int:user_id>/aprovar', methods=['POST'])
-def aprovar_usuario(user_id):
-    return jsonify({'ok': True})
-
-
-@app.route('/admin/usuarios/<int:user_id>/revogar', methods=['POST'])
-def revogar_usuario(user_id):
-    return jsonify({'ok': True})
-
-
-@app.route('/api/adicionar-dados', methods=['POST'])
-def api_adicionar_dados():
-    return jsonify({'ok': True})
-
-
-@app.route('/api/excluir-dados', methods=['DELETE'])
-def api_excluir_dados():
-    return jsonify({'ok': True})
-
-
-@app.route('/api/entrada-manual', methods=['POST'])
-def api_entrada_manual():
-    return jsonify({'ok': True})
-
-
-@app.route('/api/adicionar-siisp', methods=['POST'])
-def api_adicionar_siisp():
-    return jsonify({'ok': True})
-
 
 @app.route('/api/validar-campo', methods=['POST'])
 def api_validar_campo():
@@ -141,7 +87,7 @@ def api_validar_campo():
                     res['campo'] = 'matricula'
                 return jsonify(res), 200
             if campo == 'usuario':
-                res = validar_userna(valor)
+                res = validar_username(valor)
                 if isinstance(res, dict):
                     res['campo'] = 'usuario'
                 return jsonify(res), 200
@@ -156,14 +102,181 @@ def api_validar_campo():
     except Exception:
         return jsonify({'valido': False, 'mensagem': 'Erro interno'}), 500
 
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    #Página de login
+    if request.method == 'POST':
+        form = request.form.to_dict()
+        login_val = form.get('usuario') or form.get('email') or form.get('login') or form.get('username')
+        senha = form.get('senha')
 
-@app.route('/api/lotes')
-def api_lotes():
-    return jsonify({'ok': True})
+        result = validar_login(login_val, senha)
 
+        accept = request.headers.get('Accept', '')
+        is_ajax = request.headers.get('X-Requested-With') == 'XMLHttpRequest'
+        if request.is_json or is_ajax or 'application/json' in accept:
+            return jsonify(result), (200 if result.get('ok') else 400)
+
+        if result.get('ok'):
+            user = result.get('user') or {}
+            session['usuario_logado'] = True
+            session['usuario_id'] = user.get('id')
+            session['usuario_nome'] = user.get('nome') or user.get('usuario')
+            return redirect(url_for('dashboard', login='1'))
+        else:
+            flash(result.get('mensagem', 'Credenciais inválidas'))
+            return render_template('login.html', erro=result.get('mensagem'))
+
+    return render_template('login.html')
+
+@app.route('/logout')
+def logout():
+    # Limpa a sessão do usuário e redireciona para a página de login.
+    session.pop('usuario_logado', None)
+    session.pop('usuario_id', None)
+    session.pop('usuario_nome', None)
+
+    accept = request.headers.get('Accept', '')
+    is_ajax = request.headers.get('X-Requested-With') == 'XMLHttpRequest'
+    if request.is_json or is_ajax or 'application/json' in accept:
+        return jsonify({'ok': True, 'mensagem': 'Logout realizado com sucesso.'}), 200
+
+    flash('Você saiu com sucesso.')
+    return redirect(url_for('login'))
 
 @app.route('/api/novo-lote', methods=['POST'])
 def api_novo_lote():
+    try:
+        data = request.get_json(force=True, silent=True) or {}
+        res = salvar_novo_lote(data)
+        if res.get('success'):
+            return jsonify({'success': True, 'id': res.get('id')}), 200
+        else:
+            return jsonify({'success': False, 'error': res.get('error', 'Erro ao salvar')}), 400
+    except Exception as e:
+        return jsonify({'success': False, 'error': 'Erro interno'}), 500
+
+@app.route('/dashboard')
+def dashboard():
+    """Renderiza o dashboard com dados mínimos quando chamados.
+    Para exibir a notificação de login bem-sucedido, o login redireciona para
+    /dashboard?login=1 e aqui mapeamos isso para `mostrar_login_sucesso=True`.
+    """
+    mostrar_login_sucesso = request.args.get('login') == '1'
+    usuario_nome = session.get('usuario_nome', '')
+    dashboard_data = carregar_lotes_para_dashboard()
+    lotes = dashboard_data.get('lotes', [])
+    mapas_dados = dashboard_data.get('mapas_dados', [])
+
+    return render_template('dashboard.html', lotes=lotes, mapas_dados=mapas_dados,
+                           mostrar_login_sucesso=mostrar_login_sucesso,
+                           usuario_nome=usuario_nome)
+
+@app.route('/lotes')
+def lotes():
+    data = carregar_lotes_para_dashboard()
+    lotes = data.get('lotes', [])
+    empresas = []
+    seen = set()
+    for l in lotes:
+        e = (l.get('empresa') or '').strip()
+        if e and e not in seen:
+            seen.add(e)
+            empresas.append(e)
+    empresas.sort()
+    return render_template('lotes.html', lotes=lotes, empresas=empresas)
+
+#NÃO FEITOS
+
+@app.route('/lote/<int:lote_id>')
+def lote_detalhes(lote_id):
+    # Carregar lotes normalizados
+    data = carregar_lotes_para_dashboard()
+    lotes = data.get('lotes', [])
+    mapas_dados = data.get('mapas_dados', [])
+
+    # Encontrar lote pelo id
+    lote = None
+    for l in lotes:
+        try:
+            if int(l.get('id')) == int(lote_id):
+                lote = l
+                break
+        except Exception:
+            continue
+
+    if lote is None:
+        # lote não encontrado
+        abort(404)
+
+    # Garantir estrutura de preços existe e possui campos numéricos
+    default_meals = ('cafe', 'almoco', 'lanche', 'jantar')
+    p = lote.get('precos') if isinstance(lote.get('precos'), dict) else {}
+    for meal in default_meals:
+        sub = p.get(meal) if isinstance(p.get(meal), dict) else {}
+        try:
+            interno = float(str(sub.get('interno') or 0).replace(',', '.'))
+        except Exception:
+            interno = 0.0
+        try:
+            funcionario = float(str(sub.get('funcionario') or 0).replace(',', '.'))
+        except Exception:
+            funcionario = 0.0
+        p[meal] = {'interno': interno, 'funcionario': funcionario}
+    lote['precos'] = p
+
+    # unidades do lote (nomes)
+    unidades_lote = lote.get('unidades') or []
+
+    # mapas relacionados ao lote (por enquanto podem estar vazios) - filtrar por id com tolerância de tipos
+    mapas_lote = []
+    for m in (mapas_dados or []):
+        try:
+            if int(m.get('lote_id')) == int(lote.get('id')):
+                mapas_lote.append(m)
+        except Exception:
+            continue
+
+    return render_template('lote-detalhes.html', lote=lote, unidades_lote=unidades_lote, mapas_lote=mapas_lote)
+
+
+@app.route('/admin/usuarios')
+def admin_usuarios():
+    return jsonify({'ok': True})
+
+
+@app.route('/admin/usuarios/<int:user_id>/aprovar', methods=['POST'])
+def aprovar_usuario(user_id):
+    return jsonify({'ok': True})
+
+
+@app.route('/admin/usuarios/<int:user_id>/revogar', methods=['POST'])
+def revogar_usuario(user_id):
+    return jsonify({'ok': True})
+
+
+@app.route('/api/adicionar-dados', methods=['POST'])
+def api_adicionar_dados():
+    return jsonify({'ok': True})
+
+
+@app.route('/api/excluir-dados', methods=['DELETE'])
+def api_excluir_dados():
+    return jsonify({'ok': True})
+
+
+@app.route('/api/entrada-manual', methods=['POST'])
+def api_entrada_manual():
+    return jsonify({'ok': True})
+
+
+@app.route('/api/adicionar-siisp', methods=['POST'])
+def api_adicionar_siisp():
+    return jsonify({'ok': True})
+
+
+@app.route('/api/lotes')
+def api_lotes():
     return jsonify({'ok': True})
 
 @app.route('/exportar-tabela')
@@ -185,12 +298,15 @@ def filtro_status_badge(status):
 
 @app.context_processor
 def contexto_global():
+    # Tornar o contexto global sensível à sessão atual
+    usuario_logado = session.get('usuario_logado', False)
+    usuario_nome = session.get('usuario_nome', '')
     return {
         'app_nome': 'SGMRP',
         'app_versao': 'stub',
         'ano_atual': datetime.now().year,
-        'usuario_logado': False,
-        'usuario_nome': '',
+        'usuario_logado': usuario_logado,
+        'usuario_nome': usuario_nome,
     }
 
 

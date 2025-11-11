@@ -866,7 +866,8 @@
             if (confirm('Tem certeza que deseja sair do sistema?')) {
                 localStorage.removeItem('sgmrp_usuario');
                 localStorage.removeItem('sgmrp_remember');
-                window.location.href = 'login.html';
+                // Navegar para a rota /logout (tratada pelo Flask). Evita /login.html
+                window.location.href = "{{ url_for('logout') }}";
             }
         });
 

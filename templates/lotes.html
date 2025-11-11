@@ -327,13 +327,9 @@
                     }
                 });
             }
-            // Verificar autenticação
-            const usuarioSalvo = localStorage.getItem('sgmrp_usuario');
-            if (!usuarioSalvo) {
-                alert('Sessão expirada. Redirecionando para login.');
-                window.location.href = 'login.html';
-                return;
-            }
+            // Observação: a verificação via localStorage foi removida para
+            // evitar redirecionamentos indesejados quando a sessão Flask
+            // já está ativa. A autenticação deve ser verificada no servidor.
 
             // Logout
             var logoutBtn = document.getElementById('logoutLink');
@@ -343,7 +339,7 @@
                     if (confirm('Tem certeza que deseja sair do sistema?')) {
                         localStorage.removeItem('sgmrp_usuario');
                         localStorage.removeItem('sgmrp_remember');
-                        window.location.href = 'login.html';
+                        window.location.href = "{{ url_for('logout') }}";
                     }
                 });
             }
