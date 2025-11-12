@@ -15,8 +15,10 @@ from functions.utils import (
     validar_login,
     salvar_novo_lote,
     _load_lotes_data,
-    _load_unidades_data
-    ,carregar_lotes_para_dashboard
+    _load_unidades_data,
+    carregar_lotes_para_dashboard,
+    normalizar_precos,
+    salvar_mapas_raw
 )
 
 app = Flask(__name__)
@@ -176,6 +178,72 @@ def dashboard():
 def lotes():
     data = carregar_lotes_para_dashboard()
     lotes = data.get('lotes', [])
+    mapas = data.get('mapas_dados', [])
+
+    # calcular meses cadastrados por lote: conjunto único de (mes, ano)
+    from collections import defaultdict
+    meses_por_lote = defaultdict(set)
+    for m in (mapas or []):
+        try:
+            lote_id = int(m.get('lote_id'))
+        except Exception:
+            continue
+        mes = m.get('mes') or m.get('month') or m.get('mes_num') or m.get('month_num')
+        ano = m.get('ano') or m.get('year')
+        # tentar extrair mês/ano a partir de datas quando faltarem
+        if (mes is None or ano is None) and isinstance(m.get('datas'), list) and len(m.get('datas')) > 0:
+            try:
+                # formato esperado DD/MM/YYYY
+                parts = str(m.get('datas')[0]).split('/')
+                if len(parts) >= 3:
+                    mes = int(parts[1])
+                    ano = int(parts[2])
+            except Exception:
+                pass
+        try:
+            mes_i = int(mes)
+            ano_i = int(ano)
+        except Exception:
+            # não foi possível extrair mês/ano válidos
+            continue
+        meses_por_lote[lote_id].add((mes_i, ano_i))
+        # acumular refeições totais por lote (usar campo pré-calculado do mapa quando disponível)
+        try:
+            total = int(m.get('refeicoes_mes') or 0)
+        except Exception:
+            try:
+                total = int(float(m.get('refeicoes_mes') or 0))
+            except Exception:
+                total = 0
+        # usar defaultdict later; build a dict local
+        if 'totais_refeicoes_por_lote' not in locals():
+            totais_refeicoes_por_lote = {}
+        totais_refeicoes_por_lote[lote_id] = totais_refeicoes_por_lote.get(lote_id, 0) + total
+
+    # anexar metas calculadas a cada lote (valores default para template)
+    for l in lotes:
+        try:
+            lid = int(l.get('id'))
+        except Exception:
+            lid = None
+        count = len(meses_por_lote.get(lid, set())) if lid is not None else 0
+        l['meses_cadastrados'] = count
+        # calcular média mensal (total refeicoes / meses_cadastrados)
+        total_ref = 0
+        if lid is not None and 'totais_refeicoes_por_lote' in locals():
+            total_ref = int(totais_refeicoes_por_lote.get(lid, 0) or 0)
+        avg = 0
+        if count > 0:
+            try:
+                avg = int(round(float(total_ref) / float(count)))
+            except Exception:
+                avg = 0
+        l['refeicoes_mes'] = avg
+        if 'custo_mes' not in l:
+            l['custo_mes'] = 0.0
+        if 'desvio_mes' not in l:
+            l['desvio_mes'] = 0.0
+
     empresas = []
     seen = set()
     for l in lotes:
@@ -185,8 +253,6 @@ def lotes():
             empresas.append(e)
     empresas.sort()
     return render_template('lotes.html', lotes=lotes, empresas=empresas)
-
-#NÃO FEITOS
 
 @app.route('/lote/<int:lote_id>')
 def lote_detalhes(lote_id):
@@ -209,21 +275,8 @@ def lote_detalhes(lote_id):
         # lote não encontrado
         abort(404)
 
-    # Garantir estrutura de preços existe e possui campos numéricos
-    default_meals = ('cafe', 'almoco', 'lanche', 'jantar')
-    p = lote.get('precos') if isinstance(lote.get('precos'), dict) else {}
-    for meal in default_meals:
-        sub = p.get(meal) if isinstance(p.get(meal), dict) else {}
-        try:
-            interno = float(str(sub.get('interno') or 0).replace(',', '.'))
-        except Exception:
-            interno = 0.0
-        try:
-            funcionario = float(str(sub.get('funcionario') or 0).replace(',', '.'))
-        except Exception:
-            funcionario = 0.0
-        p[meal] = {'interno': interno, 'funcionario': funcionario}
-    lote['precos'] = p
+    # Normalizar precos usando helper centralizado
+    lote['precos'] = normalizar_precos(lote.get('precos'))
 
     # unidades do lote (nomes)
     unidades_lote = lote.get('unidades') or []
@@ -239,6 +292,56 @@ def lote_detalhes(lote_id):
 
     return render_template('lote-detalhes.html', lote=lote, unidades_lote=unidades_lote, mapas_lote=mapas_lote)
 
+@app.route('/api/adicionar-dados', methods=['POST'])
+def api_adicionar_dados():
+    try:
+        data = request.get_json(force=True, silent=True)
+        res = salvar_mapas_raw(data)
+        # Retornar sempre 200 OK com formato { success: bool, ... } para o frontend
+        if res.get('success'):
+            # Preferir retornar o registro salvo (possivelmente com id atribuído) quando disponível
+            registro = res.get('registro') if res.get('registro') is not None else data
+            extra_id = res.get('id')
+            # Derivar uma validação simples a partir do registro salvo (linhas/colunas_count quando disponíveis)
+            registros_processados = 0
+            dias_esperados = 0
+            try:
+                if isinstance(registro, dict):
+                    registros_processados = int(registro.get('linhas') or 0)
+                    dias_esperados = int(registro.get('colunas_count') or 0)
+            except Exception:
+                registros_processados = 0
+                dias_esperados = 0
+
+            validacao = {
+                'valido': True,
+                'refeicoes': {
+                    'registros_processados': registros_processados,
+                    'dias_esperados': dias_esperados
+                },
+                'siisp': {
+                    'mensagem': 'N/A'
+                },
+                'mensagem_geral': 'Dados salvos'
+            }
+
+            # incluir operação (created/overwritten) quando fornecida pelo saver
+            operacao = res.get('operacao')
+            if not operacao and isinstance(res.get('operacoes'), list) and len(res.get('operacoes')) == 1:
+                operacao = res.get('operacoes')[0]
+
+            resp = {'success': True, 'registro': registro, 'validacao': validacao}
+            if extra_id is not None:
+                resp['id'] = extra_id
+            if operacao is not None:
+                resp['operacao'] = operacao
+            return jsonify(resp), 200
+        else:
+            return jsonify({'success': False, 'error': res.get('error', 'Erro ao salvar')}), 200
+    except Exception:
+        return jsonify({'success': False, 'error': 'Erro interno'}), 200
+
+#NÃO FEITOS
 
 @app.route('/admin/usuarios')
 def admin_usuarios():
@@ -253,12 +356,6 @@ def aprovar_usuario(user_id):
 @app.route('/admin/usuarios/<int:user_id>/revogar', methods=['POST'])
 def revogar_usuario(user_id):
     return jsonify({'ok': True})
-
-
-@app.route('/api/adicionar-dados', methods=['POST'])
-def api_adicionar_dados():
-    return jsonify({'ok': True})
-
 
 @app.route('/api/excluir-dados', methods=['DELETE'])
 def api_excluir_dados():

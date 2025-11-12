@@ -2,7 +2,11 @@ import json
 import re
 import os
 from datetime import datetime
-import bcrypt
+try:
+	import bcrypt
+except Exception:
+	bcrypt = None
+import calendar
 
 
 # ----- Security / Password helpers -----
@@ -565,6 +569,342 @@ def salvar_novo_lote(payload: dict):
 	return {'success': True, 'id': new_id}
 
 
+# ----- Preços normalization helper (exported) -----
+def normalizar_precos(raw_precos):
+	"""Normaliza diferentes formatos de `precos` para o formato nested esperado
+
+	Entrada aceita:
+	  - dict nested: {'cafe': {'interno': '1.2', 'funcionario': '0.8'}, ...}
+	  - dict plano: {'cafe_interno': '1.2', 'cafe_funcionario': '0.8', ...}
+	  - string JSON ou string com pares tipo "cafe_interno:1.2,cafe_funcionario=0.8"
+
+	Retorna:
+	  {'cafe': {'interno': float, 'funcionario': float}, ...}
+	"""
+	meals = ('cafe', 'almoco', 'lanche', 'jantar')
+
+	def _to_float(v):
+		try:
+			return float(str(v).replace(',', '.'))
+		except Exception:
+			return 0.0
+
+	res = {m: {'interno': 0.0, 'funcionario': 0.0} for m in meals}
+	if raw_precos is None:
+		return res
+
+	# string -> tentar decodificar JSON ou extrair pares
+	if isinstance(raw_precos, str):
+		txt = raw_precos.strip()
+		try:
+			parsed = json.loads(txt)
+		except Exception:
+			try:
+				parsed = json.loads(txt.replace("'", '"'))
+			except Exception:
+				parsed = {}
+				for m in re.finditer(r"([a-zA-Z0-9_]+)\s*[:=]\s*['\"]?([0-9\.,]+)['\"]?", txt):
+					k = m.group(1)
+					v = m.group(2)
+					parsed[k] = v
+		raw = parsed
+	elif isinstance(raw_precos, dict):
+		raw = raw_precos
+	else:
+		return res
+
+	if isinstance(raw, dict):
+		for meal in meals:
+			val = raw.get(meal)
+			if isinstance(val, dict):
+				res[meal]['interno'] = _to_float(val.get('interno') or val.get('interno_val') or 0)
+				res[meal]['funcionario'] = _to_float(val.get('funcionario') or val.get('funcionario_val') or 0)
+			else:
+				int_key = f"{meal}_interno"
+				func_key = f"{meal}_funcionario"
+				if int_key in raw or func_key in raw:
+					res[meal]['interno'] = _to_float(raw.get(int_key) or raw.get(int_key.replace('_', '')))
+					res[meal]['funcionario'] = _to_float(raw.get(func_key) or raw.get(func_key.replace('_', '')))
+				int_key2 = f"{meal}Interno"
+				func_key2 = f"{meal}Funcionario"
+				if (res[meal]['interno'] == 0.0) and int_key2 in raw:
+					res[meal]['interno'] = _to_float(raw.get(int_key2))
+				if (res[meal]['funcionario'] == 0.0) and func_key2 in raw:
+					res[meal]['funcionario'] = _to_float(raw.get(func_key2))
+		for m in meals:
+			res[m]['interno'] = _to_float(res[m]['interno'])
+			res[m]['funcionario'] = _to_float(res[m]['funcionario'])
+		return res
+	return res
+
+
+# ----- Parser tabular para campos de texto -----
+def parse_texto_tabular(texto):
+	"""Analisa texto tabular (separado por tab ou por espaços) e retorna
+	um dicionário com listas numéricas por coluna.
+
+	Retorno exemplo quando bem-sucedido:
+	  {'ok': True, 'colunas': {0: [1,2,3], 1: [128,127,...]}, 'linhas': N, 'colunas_count': M}
+
+	Se falhar, retorna {'ok': False, 'error': '...'}.
+	"""
+	if texto is None:
+		return {'ok': False, 'error': 'Texto vazio'}
+	if not isinstance(texto, str):
+		try:
+			texto = str(texto)
+		except Exception:
+			return {'ok': False, 'error': 'Texto não serializável'}
+
+	lines = [ln.strip() for ln in texto.splitlines() if ln.strip()]
+	if not lines:
+		return {'ok': True, 'colunas': {}, 'linhas': 0, 'colunas_count': 0}
+
+	# determinar delimitador: preferir tab, senão espaço(s)
+	delimiter = '\t' if any('\t' in ln for ln in lines) else None
+
+	rows = []
+	for ln in lines:
+		if delimiter:
+			parts = [p.strip() for p in ln.split('\t')]
+		else:
+			# separar por espaços múltiplos
+			parts = [p.strip() for p in re.split(r"\s+", ln) if p.strip()]
+		rows.append(parts)
+
+	# número máximo de colunas
+	max_cols = max(len(r) for r in rows)
+
+	# inicializar colunas — usar chaves legíveis: 'coluna_0', 'coluna_1', ...
+	cols = {f'coluna_{i}': [] for i in range(max_cols)}
+
+	def _to_number(token):
+		if token is None:
+			return None
+		t = str(token).strip()
+		if t == '':
+			return None
+		# substituir vírgula decimal
+		t2 = t.replace(',', '.')
+		# permitir sinais e pontos
+		m = re.match(r'^[-+]?\d+(?:\.\d+)?$', t2)
+		if m:
+			# inteiro ou float
+			if '.' in t2:
+				try:
+					return float(t2)
+				except Exception:
+					return None
+			else:
+				try:
+					return int(t2)
+				except Exception:
+					try:
+						return float(t2)
+					except Exception:
+						return None
+		# tentar extrair primeiro número presente
+		m2 = re.search(r'[-+]?\d+[\.,]?\d*', t)
+		if m2:
+			s = m2.group(0).replace(',', '.')
+			try:
+				if '.' in s:
+					return float(s)
+				return int(s)
+			except Exception:
+				try:
+					return float(s)
+				except Exception:
+					return None
+		return None
+
+	for r in rows:
+		for idx in range(max_cols):
+			token = r[idx] if idx < len(r) else ''
+			num = _to_number(token)
+			cols[f'coluna_{idx}'].append(num)
+
+	return {'ok': True, 'colunas': cols, 'linhas': len(rows), 'colunas_count': max_cols}
+
+
+def _normalizar_datas_coluna(col0_values, entry):
+	"""Normaliza valores da coluna_0 para uma lista de strings DD/MM/YYYY baseada em mes/ano do registro.
+
+	Aceita tokens numéricos (1, 2), strings como 'dia 1', '01/10' etc. Se não for possível
+	normalizar um token, coloca None na posição correspondente.
+	"""
+	if not isinstance(col0_values, list):
+		return None
+
+	# extrair mês e ano do entry com várias chaves possíveis
+	mes_keys = ('mes', 'month', 'mes_num', 'mesNumero', 'month_num')
+	ano_keys = ('ano', 'year')
+	mes = None
+	ano = None
+	for k in mes_keys:
+		if k in entry and entry.get(k) is not None:
+			try:
+				mes = int(entry.get(k))
+				break
+			except Exception:
+				try:
+					mes = int(str(entry.get(k)).strip())
+					break
+				except Exception:
+					mes = None
+	for k in ano_keys:
+		if k in entry and entry.get(k) is not None:
+			try:
+				ano = int(entry.get(k))
+				break
+			except Exception:
+				try:
+					ano = int(str(entry.get(k)).strip())
+					break
+				except Exception:
+					ano = None
+
+	# fallback para ano/mês atual quando não fornecidos
+	now = datetime.now()
+	if mes is None:
+		mes = now.month
+	if ano is None:
+		ano = now.year
+
+	# número de dias no mês para validação
+	try:
+		days_in_month = calendar.monthrange(ano, mes)[1]
+	except Exception:
+		days_in_month = 31
+
+	out = []
+	for v in col0_values:
+		if v is None:
+			out.append(None)
+			continue
+		# aceitar inteiros já convertidos pelo parser
+		if isinstance(v, (int,)):
+			day = int(v)
+		else:
+			s = str(v).strip()
+			if not s:
+				out.append(None)
+				continue
+			# formatos com barra: '01/10' -> extrair primeira parte como dia
+			if '/' in s or '-' in s:
+				parts = re.split(r'[\/\-]', s)
+				# procurar o primeiro numeric part
+				day = None
+				for p in parts:
+					m = re.search(r'(\d{1,2})', p)
+					if m:
+						try:
+							day = int(m.group(1))
+							break
+						except Exception:
+							day = None
+				if day is None:
+					# fallback: look for any number
+					nm = re.search(r'(\d{1,2})', s)
+					day = int(nm.group(1)) if nm else None
+			else:
+				# 'dia 1' or '1' or '01' etc. buscar primeiro número de 1-2 dígitos
+				m = re.search(r'(\d{1,2})', s)
+				if m:
+					try:
+						day = int(m.group(1))
+					except Exception:
+						day = None
+				else:
+					day = None
+
+		# validar dia
+		try:
+			if day is None or day < 1 or day > days_in_month:
+				out.append(None)
+			else:
+				dt = datetime(year=ano, month=mes, day=day)
+				out.append(dt.strftime('%d/%m/%Y'))
+		except Exception:
+			out.append(None)
+
+	return out
+
+
+def _get_days_in_month_from_entry(entry):
+	"""Retorna número de dias do mês/ano declarado no registro, ou None se não puder extrair."""
+	mes_keys = ('mes', 'month', 'mes_num', 'mesNumero', 'month_num')
+	ano_keys = ('ano', 'year')
+	mes = None
+	ano = None
+	for k in mes_keys:
+		if k in entry and entry.get(k) is not None:
+			try:
+				mes = int(entry.get(k))
+				break
+			except Exception:
+				try:
+					mes = int(str(entry.get(k)).strip())
+					break
+				except Exception:
+					mes = None
+	for k in ano_keys:
+		if k in entry and entry.get(k) is not None:
+			try:
+				ano = int(entry.get(k))
+				break
+			except Exception:
+				try:
+					ano = int(str(entry.get(k)).strip())
+					break
+				except Exception:
+					ano = None
+	if mes is None or ano is None:
+		return None
+	try:
+		return calendar.monthrange(ano, mes)[1]
+	except Exception:
+		return None
+
+
+def _validate_map_day_lengths(entry):
+	"""Valida que todas as listas diárias presentes no registro tenham comprimento igual ao número de dias do mês/ano.
+
+	Retorna (True, None) quando ok, ou (False, mensagem) quando inválido.
+	"""
+	days = _get_days_in_month_from_entry(entry)
+	if days is None:
+		return (False, 'Mês ou ano inválido ou ausente no registro')
+
+	expected = int(days)
+	# campos que representam séries diárias — se presentes, devem ter length == expected
+	daily_fields = [
+		'dados_siisp',
+		'cafe_interno', 'cafe_funcionario',
+		'almoco_interno', 'almoco_funcionario',
+		'lanche_interno', 'lanche_funcionario',
+		'jantar_interno', 'jantar_funcionario',
+		'datas'
+	]
+	errors = []
+	for f in daily_fields:
+		if f in entry:
+			v = entry.get(f)
+			if not isinstance(v, list):
+				errors.append(f"{f} não é uma lista")
+			else:
+				# dados_siisp é opcional: pode ser lista vazia (nenhum dado) ou ter exatamente 'expected' elementos
+				if f == 'dados_siisp':
+					if len(v) not in (0, expected):
+						errors.append(f"{f} tem {len(v)} elementos; esperado 0 ou {expected}")
+				else:
+					if len(v) != expected:
+						errors.append(f"{f} tem {len(v)} elementos; esperado {expected}")
+	if errors:
+		return (False, '; '.join(errors))
+	return (True, None)
+
+
 # ----- Dashboard loader (reusable) -----
 def carregar_lotes_para_dashboard():
 	"""Carrega e normaliza os lotes e unidades para uso no dashboard.
@@ -614,74 +954,9 @@ def carregar_lotes_para_dashboard():
 			else:
 				unidades_final = [str(x) for x in raw_unidades if x]
 
-		# Normalizar campo de precos: aceita dicts nested, dicts com chaves planas
-		# (ex: 'cafe_interno') ou strings JSON. Retorna sempre a forma nested
-		# { 'cafe': {'interno': float, 'funcionario': float}, ... }
-		def _to_float(v):
-			try:
-				return float(str(v).replace(',', '.'))
-			except Exception:
-				return 0.0
-
-		def _normalize_precos(raw_precos):
-			meals = ('cafe', 'almoco', 'lanche', 'jantar')
-			# resultado nested
-			res = {m: {'interno': 0.0, 'funcionario': 0.0} for m in meals}
-			if raw_precos is None:
-				return res
-			# Se for string, tentar decodificar JSON ou extrair pares chave:valor
-			if isinstance(raw_precos, str):
-				txt = raw_precos.strip()
-				# tentar JSON primeiro
-				try:
-					parsed = json.loads(txt)
-				except Exception:
-					# tentar trocar aspas simples por duplas e carregar
-					try:
-						parsed = json.loads(txt.replace("'", '"'))
-					except Exception:
-						# extrair pares simples como key: value ou key=value
-						parsed = {}
-						for m in re.finditer(r"([a-zA-Z0-9_]+)\s*[:=]\s*['\"]?([0-9\.,]+)['\"]?", txt):
-							k = m.group(1)
-							v = m.group(2)
-							parsed[k] = v
-				# usar parsed abaixo
-				raw = parsed
-			elif isinstance(raw_precos, dict):
-				raw = raw_precos
-			else:
-				# formatos inesperados
-				return res
-
-			# se raw tiver as chaves nested por refeição
-			if isinstance(raw, dict):
-				for meal in meals:
-					val = raw.get(meal)
-					if isinstance(val, dict):
-						res[meal]['interno'] = _to_float(val.get('interno') or val.get('interno_val') or 0)
-						res[meal]['funcionario'] = _to_float(val.get('funcionario') or val.get('funcionario_val') or 0)
-					else:
-						# procurar chaves planas como cafe_interno, cafe_funcionario
-						int_key = f"{meal}_interno"
-						func_key = f"{meal}_funcionario"
-						if int_key in raw or func_key in raw:
-							res[meal]['interno'] = _to_float(raw.get(int_key) or raw.get(int_key.replace('_', '')))
-							res[meal]['funcionario'] = _to_float(raw.get(func_key) or raw.get(func_key.replace('_', '')))
-						# também aceitar chaves estilo camelCase
-						int_key2 = f"{meal}Interno"
-						func_key2 = f"{meal}Funcionario"
-						if (res[meal]['interno'] == 0.0) and int_key2 in raw:
-							res[meal]['interno'] = _to_float(raw.get(int_key2))
-						if (res[meal]['funcionario'] == 0.0) and func_key2 in raw:
-							res[meal]['funcionario'] = _to_float(raw.get(func_key2))
-				# garantir floats
-				for m in meals:
-					res[m]['interno'] = _to_float(res[m]['interno'])
-					res[m]['funcionario'] = _to_float(res[m]['funcionario'])
-				return res
-			# fallback
-			return res
+		# usar função pública de normalização de preços
+		# (normalizar_precos já lida com strings, dicts planos e nested)
+		# removemos a implementação local e delegamos à função exportada
 
 		# garantir campos numéricos usados pelo template com valores padrão
 		try:
@@ -729,7 +1004,7 @@ def carregar_lotes_para_dashboard():
 			'data_inicio': l.get('data_inicio'),
 			'ativo': l.get('ativo', True),
 			'unidades': unidades_final,
-			'precos': _normalize_precos(l.get('precos')),
+			'precos': normalizar_precos(l.get('precos')),
 			'refeicoes_mes': refeicoes_mes,
 			'custo_mes': custo_mes,
 			'desvio_mes': desvio_mes,
@@ -741,4 +1016,503 @@ def carregar_lotes_para_dashboard():
 		lotes.append(lote_obj)
 
 	mapas_dados = []
+
+	# Carregar mapas salvos (se existirem) e normalizar para uso no dashboard
+	mapas_raw = _load_mapas_data() or []
+	mapas_list_src = []
+	if isinstance(mapas_raw, dict) and isinstance(mapas_raw.get('mapas'), list):
+		mapas_list_src = mapas_raw.get('mapas')
+	elif isinstance(mapas_raw, list):
+		mapas_list_src = mapas_raw
+	else:
+		mapas_list_src = []
+
+	for m in mapas_list_src:
+		if not isinstance(m, dict):
+			continue
+		# normalizar campos básicos
+		try:
+			lote_id = int(m.get('lote_id') if m.get('lote_id') is not None else m.get('lote') or m.get('loteId'))
+		except Exception:
+			try:
+				lote_id = int(str(m.get('lote_id') or m.get('lote') or m.get('loteId')).strip())
+			except Exception:
+				lote_id = None
+
+		mes_val = m.get('mes') or m.get('month') or m.get('mes_num')
+		ano_val = m.get('ano') or m.get('year')
+		try:
+			mes = int(mes_val)
+		except Exception:
+			try:
+				mes = int(str(mes_val).strip())
+			except Exception:
+				mes = None
+		try:
+			ano = int(ano_val)
+		except Exception:
+			try:
+				ano = int(str(ano_val).strip())
+			except Exception:
+				ano = None
+
+		unidade_raw = m.get('unidade') or m.get('unidade_nome') or m.get('unidadeNome') or ''
+		# if unidade looks like an id, map to name
+		nome_unidade = None
+		try:
+			if isinstance(unidade_raw, int):
+				nome_unidade = unidades_map.get(int(unidade_raw))
+			else:
+				ustr = str(unidade_raw).strip()
+				if ustr.isdigit():
+					uid = int(ustr)
+					nome_unidade = unidades_map.get(uid) or ustr
+				else:
+					nome_unidade = ustr
+		except Exception:
+			nome_unidade = str(unidade_raw)
+
+		# datas
+		datas = m.get('datas') if isinstance(m.get('datas'), list) else []
+
+		# helper to coerce list fields to lists of numbers
+		def _coerce_list(name):
+			v = m.get(name)
+			if isinstance(v, list):
+				return v
+			return []
+
+		cafe_interno = _coerce_list('cafe_interno')
+		cafe_funcionario = _coerce_list('cafe_funcionario')
+		almoco_interno = _coerce_list('almoco_interno')
+		almoco_funcionario = _coerce_list('almoco_funcionario')
+		lanche_interno = _coerce_list('lanche_interno')
+		lanche_funcionario = _coerce_list('lanche_funcionario')
+		jantar_interno = _coerce_list('jantar_interno')
+		jantar_funcionario = _coerce_list('jantar_funcionario')
+		dados_siisp = _coerce_list('dados_siisp')
+
+		# calcular total de refeições no mês (somando interno+funcionario de cada refeição por dia)
+		total_refeicoes = 0
+		# determinar número de dias como comprimento máximo das listas de datas ou das listas de refeições
+		n_days = 0
+		if isinstance(datas, list) and len(datas) > 0:
+			n_days = len(datas)
+		else:
+			n_days = max(len(cafe_interno), len(cafe_funcionario), len(almoco_interno), len(almoco_funcionario), len(lanche_interno), len(lanche_funcionario), len(jantar_interno), len(jantar_funcionario))
+
+		for i in range(n_days):
+			vals = 0
+			for arr in (cafe_interno, cafe_funcionario, almoco_interno, almoco_funcionario, lanche_interno, lanche_funcionario, jantar_interno, jantar_funcionario):
+				try:
+					v = arr[i] if i < len(arr) and (arr[i] is not None) else 0
+					vals += int(v)
+				except Exception:
+					try:
+						vals += int(float(arr[i]))
+					except Exception:
+						pass
+			total_refeicoes += vals
+
+		mapa_obj = {
+			'id': m.get('id'),
+			'lote_id': lote_id,
+			'nome_unidade': nome_unidade,
+			'mes': mes,
+			'ano': ano,
+			'data': datas,
+			'linhas': int(m.get('linhas') or 0),
+			'colunas_count': int(m.get('colunas_count') or 0),
+			'cafe_interno': cafe_interno,
+			'cafe_funcionario': cafe_funcionario,
+			'almoco_interno': almoco_interno,
+			'almoco_funcionario': almoco_funcionario,
+			'lanche_interno': lanche_interno,
+			'lanche_funcionario': lanche_funcionario,
+			'jantar_interno': jantar_interno,
+			'jantar_funcionario': jantar_funcionario,
+			'dados_siisp': dados_siisp,
+			'refeicoes_mes': total_refeicoes,
+			'criado_em': m.get('criado_em'),
+			'atualizado_em': m.get('atualizado_em')
+		}
+		mapas_dados.append(mapa_obj)
+
 	return {'lotes': lotes, 'mapas_dados': mapas_dados}
+
+
+def _load_mapas_data():
+	base_dir = os.path.dirname(os.path.dirname(__file__))
+	mapas_path = os.path.join(base_dir, 'dados', 'mapas.json')
+	if not os.path.isfile(mapas_path):
+		return None
+	try:
+		with open(mapas_path, 'r', encoding='utf-8') as f:
+			return json.load(f)
+	except Exception:
+		return None
+
+
+def _save_mapas_data(data):
+	base_dir = os.path.dirname(os.path.dirname(__file__))
+	mapas_path = os.path.join(base_dir, 'dados', 'mapas.json')
+	try:
+		os.makedirs(os.path.dirname(mapas_path), exist_ok=True)
+		tmp_path = mapas_path + '.tmp'
+		with open(tmp_path, 'w', encoding='utf-8') as f:
+			json.dump(data, f, ensure_ascii=False, indent=2)
+		os.replace(tmp_path, mapas_path)
+		return True
+	except Exception:
+		return False
+
+
+def salvar_mapas_raw(payload):
+	"""Salva o payload recebido diretamente em dados/mapas.json sem tratamento.
+
+	Retorna dict simples: {'success': True} ou {'success': False, 'error': '...'}.
+	"""
+	# Aceitar dict ou lista (um ou vários mapas). Vamos armazenar os mapas
+	# como uma lista dentro de dados/mapas.json (ou manter wrapper {'mapas': [...]}).
+	try:
+		existing = _load_mapas_data()
+		mapas_list = []
+		wrapped = None
+		if isinstance(existing, dict) and isinstance(existing.get('mapas'), list):
+			mapas_list = existing.get('mapas')
+			wrapped = existing
+		elif isinstance(existing, list):
+			mapas_list = existing
+		else:
+			mapas_list = []
+
+		# coletar ids existentes
+		existing_ids = {int(m.get('id')) for m in mapas_list if isinstance(m, dict) and isinstance(m.get('id'), int)}
+		next_id = (max(existing_ids) + 1) if existing_ids else 0
+
+		entries = []
+		if isinstance(payload, list):
+			entries = payload
+		else:
+			entries = [payload or {}]
+
+		saved_ids = []
+		saved_records = []
+		for entry in entries:
+			if not isinstance(entry, dict):
+				# envolver valores não-dict
+				entry = {'data': entry}
+			# decidir id
+			provided = entry.get('id')
+
+			# Função auxiliar: extrair a tupla de chave (lote_id, unidade, mes, ano)
+			def _extract_key(obj):
+				# possíveis nomes
+				lote_keys = ('lote_id', 'loteId', 'lote', 'loteId')
+				unidade_keys = ('unidade', 'unidade_id', 'unidadeId', 'unidade_nome', 'unidadeNome')
+				mes_keys = ('mes', 'month', 'mes_num', 'mesNumero', 'month_num')
+				ano_keys = ('ano', 'year')
+				try:
+					lote_val = None
+					for k in lote_keys:
+						if k in obj:
+							lote_val = obj.get(k)
+							break
+					if lote_val is None:
+						return None
+					unidade_val = None
+					for k in unidade_keys:
+						if k in obj:
+							unidade_val = obj.get(k)
+							break
+					if unidade_val is None:
+						return None
+					mes_val = None
+					for k in mes_keys:
+						if k in obj:
+							mes_val = obj.get(k)
+							break
+					if mes_val is None:
+						return None
+					ano_val = None
+					for k in ano_keys:
+						if k in obj:
+							ano_val = obj.get(k)
+							break
+					if ano_val is None:
+						return None
+					# normalizar tipos
+					try:
+						lote_n = int(lote_val)
+					except Exception:
+						try:
+							lote_n = int(str(lote_val).strip())
+						except Exception:
+							return None
+					try:
+						mes_n = int(mes_val)
+					except Exception:
+						try:
+							mes_n = int(str(mes_val).strip())
+						except Exception:
+							return None
+					try:
+						ano_n = int(ano_val)
+					except Exception:
+						try:
+							ano_n = int(str(ano_val).strip())
+						except Exception:
+							return None
+					unidade_s = str(unidade_val).strip().lower()
+					return (lote_n, unidade_s, mes_n, ano_n)
+				except Exception:
+					return None
+
+			entry_key = _extract_key(entry)
+			matched_index = None
+			matched_record = None
+			if entry_key is not None:
+				# procurar por mapa existente com a mesma tupla
+				for idx, existing_map in enumerate(mapas_list):
+					try:
+						existing_key = _extract_key(existing_map) if isinstance(existing_map, dict) else None
+						if existing_key is not None and existing_key == entry_key:
+							matched_index = idx
+							matched_record = existing_map
+							break
+					except Exception:
+						continue
+
+			if matched_index is not None:
+				# sobrescrever: manter o mesmo id do registro existente
+				assigned = int(matched_record.get('id')) if isinstance(matched_record.get('id'), int) else matched_record.get('id')
+				rec = dict(entry)
+				# Se o registro contém texto tabular, tentar parsear para colunas numéricas
+				possible_text_keys = ('texto', 'conteudo', 'dados', 'texto_raw', 'texto_mapas', 'mapa_texto')
+				text_val = None
+				used_text_key = None
+				for k in possible_text_keys:
+					if k in rec and rec.get(k) is not None:
+						text_val = rec.get(k)
+						used_text_key = k
+						break
+				if text_val is not None:
+					parsed = parse_texto_tabular(text_val)
+					if parsed.get('ok'):
+						cols = parsed.get('colunas') or {}
+						col_count = int(parsed.get('colunas_count') or 0)
+						# exigir ao menos 9 colunas quando o texto foi enviado como mapa (upload de mapa)
+						if col_count < 9:
+							return {'success': False, 'error': f'Texto tabular contém colunas insuficientes: {col_count} (<9)'}
+						for ck, cv in cols.items():
+							rec[ck] = cv
+						# atribuir contagens
+						rec['linhas'] = parsed.get('linhas')
+						rec['colunas_count'] = parsed.get('colunas_count')
+						col_count = int(parsed.get('colunas_count') or 0)
+						# Se o parse gerou apenas 1 coluna, tratar como dados_siisp (lista numérica)
+						if col_count == 1:
+							# mover coluna_0 para dados_siisp
+							if 'coluna_0' in rec:
+								rec['dados_siisp'] = rec.pop('coluna_0')
+							else:
+								rec['dados_siisp'] = []
+						else:
+							# renomear colunas nutricionais: coluna_1..coluna_8 -> nomes semânticos
+							col_rename_map = {
+								'coluna_1': 'cafe_interno',
+								'coluna_2': 'cafe_funcionario',
+								'coluna_3': 'almoco_interno',
+								'coluna_4': 'almoco_funcionario',
+								'coluna_5': 'lanche_interno',
+								'coluna_6': 'lanche_funcionario',
+								'coluna_7': 'jantar_interno',
+								'coluna_8': 'jantar_funcionario'
+							}
+							for oldk, newk in col_rename_map.items():
+								if oldk in rec:
+									rec[newk] = rec.pop(oldk)
+							# normalizar coluna_0 para 'datas' e remover coluna_0
+							if 'coluna_0' in rec:
+								try:
+									datas = _normalizar_datas_coluna(rec.get('coluna_0'), rec)
+									rec.pop('coluna_0', None)
+									rec['datas'] = datas
+								except Exception:
+									pass
+					else:
+						rec['colunas_parse_error'] = parsed.get('error')
+					# remover o campo de texto cru antes de salvar
+					if used_text_key:
+						try:
+							rec.pop(used_text_key, None)
+						except Exception:
+							pass
+				rec['id'] = assigned
+				# Normalizar campo dados_siisp recebido diretamente (pode ser string com linhas)
+				if 'dados_siisp' in rec:
+					val = rec.get('dados_siisp')
+					if isinstance(val, str):
+						parsed_ds = parse_texto_tabular(val)
+						if parsed_ds.get('ok') and int(parsed_ds.get('colunas_count') or 0) == 1:
+							rec['dados_siisp'] = parsed_ds.get('colunas', {}).get('coluna_0', [])
+						else:
+							# se não conseguiu parsear, tornar lista vazia
+							rec['dados_siisp'] = []
+					elif not isinstance(val, list):
+						rec['dados_siisp'] = []
+				# garantir que sempre exista lista em dados_siisp
+				if 'dados_siisp' not in rec or rec.get('dados_siisp') is None:
+					rec['dados_siisp'] = []
+				# preservar criado_em se houver, e anotar atualizado_em
+				if 'criado_em' not in rec and matched_record.get('criado_em'):
+					rec['criado_em'] = matched_record.get('criado_em')
+				rec['atualizado_em'] = datetime.now().isoformat()
+				# validar comprimentos das listas diárias antes de sobrescrever
+				valid_ok, valid_msg = _validate_map_day_lengths(rec)
+				if not valid_ok:
+					return {'success': False, 'error': f'Validação de tamanho falhou: {valid_msg}'}
+				# substituir no lugar
+				mapas_list[matched_index] = rec
+				saved_ids.append(assigned)
+				saved_records.append(rec)
+				# marcar operação para este registro
+				if 'operacoes' not in locals():
+					operacoes = []
+				operacoes.append('overwritten')
+				# atualizar existing_ids set (id já existia)
+				existing_ids.add(int(assigned))
+				continue
+
+			# Se o registro contém texto tabular, tentar parsear para colunas numéricas
+			# aceitar 'texto' como entrada mas não armazená-lo: iremos parsear e remover
+			possible_text_keys = ('texto', 'conteudo', 'dados', 'texto_raw', 'texto_mapas', 'mapa_texto')
+			text_val = None
+			used_text_key = None
+			for k in possible_text_keys:
+				if k in entry and entry.get(k) is not None:
+					text_val = entry.get(k)
+					used_text_key = k
+					break
+			if text_val is not None:
+				parsed = parse_texto_tabular(text_val)
+				if parsed.get('ok'):
+					# anexar colunas e contagens no registro salvo
+					cols = parsed.get('colunas') or {}
+					# mover cada coluna para o nível superior do registro (chaves 'coluna_0', 'coluna_1', ...)
+					for ck, cv in cols.items():
+						entry[ck] = cv
+					entry['linhas'] = parsed.get('linhas')
+					entry['colunas_count'] = parsed.get('colunas_count')
+					col_count = int(parsed.get('colunas_count') or 0)
+					# exigir ao menos 9 colunas quando o texto foi enviado como mapa (upload de mapa)
+					if col_count < 9:
+						return {'success': False, 'error': f'Texto tabular contém colunas insuficientes: {col_count} (<9)'}
+					# Se houver apenas 1 coluna no texto, tratá-la como dados_siisp
+					if col_count == 1:
+						if 'coluna_0' in entry:
+							entry['dados_siisp'] = entry.pop('coluna_0')
+						else:
+							entry['dados_siisp'] = []
+					else:
+						# renomear colunas nutricionais: coluna_1..coluna_8 -> nomes semânticos
+						col_rename_map = {
+							'coluna_1': 'cafe_interno',
+							'coluna_2': 'cafe_funcionario',
+							'coluna_3': 'almoco_interno',
+							'coluna_4': 'almoco_funcionario',
+							'coluna_5': 'lanche_interno',
+							'coluna_6': 'lanche_funcionario',
+							'coluna_7': 'jantar_interno',
+							'coluna_8': 'jantar_funcionario'
+						}
+						for oldk, newk in col_rename_map.items():
+							if oldk in entry:
+								entry[newk] = entry.pop(oldk)
+						# normalizar coluna_0 para 'datas' com padrão DD/MM/YYYY baseado em mes/ano do registro
+						if 'coluna_0' in entry:
+							try:
+								datas = _normalizar_datas_coluna(entry.get('coluna_0'), entry)
+								# remover coluna_0 após normalizar
+								entry.pop('coluna_0', None)
+								entry['datas'] = datas
+							except Exception:
+								# não interromper o salvamento em caso de falha na normalização
+								pass
+				else:
+					# anotar erro de parse, mas prosseguir com o salvamento bruto
+					entry['colunas_parse_error'] = parsed.get('error')
+				# remover o campo de texto cru antes de salvar (usuário pediu não armazenar 'texto')
+				if used_text_key:
+					try:
+						entry.pop(used_text_key, None)
+					except Exception:
+						pass
+			if provided is None:
+				assigned = next_id
+				next_id += 1
+			else:
+				# validar id fornecido
+				try:
+					pid = int(provided)
+				except Exception:
+					return {'success': False, 'error': 'ID inválido fornecido'}
+				if pid in existing_ids or pid in saved_ids:
+					return {'success': False, 'error': f'ID já existe: {pid}'}
+				assigned = pid
+				if pid >= next_id:
+					next_id = pid + 1
+
+			rec = dict(entry)
+			rec['id'] = assigned
+			if 'criado_em' not in rec:
+				rec['criado_em'] = datetime.now().isoformat()
+			# Normalizar campo dados_siisp recebido diretamente (pode ser string com linhas)
+			if 'dados_siisp' in rec:
+				val = rec.get('dados_siisp')
+				if isinstance(val, str):
+					parsed_ds = parse_texto_tabular(val)
+					if parsed_ds.get('ok') and int(parsed_ds.get('colunas_count') or 0) == 1:
+						rec['dados_siisp'] = parsed_ds.get('colunas', {}).get('coluna_0', [])
+					else:
+						rec['dados_siisp'] = []
+				elif not isinstance(val, list):
+					rec['dados_siisp'] = []
+			# garantir lista vazia quando não enviado
+			if 'dados_siisp' not in rec or rec.get('dados_siisp') is None:
+				rec['dados_siisp'] = []
+			# validar comprimentos das listas diárias antes de salvar
+			valid_ok, valid_msg = _validate_map_day_lengths(rec)
+			if not valid_ok:
+				return {'success': False, 'error': f'Validação de tamanho falhou: {valid_msg}'}
+			mapas_list.append(rec)
+			saved_ids.append(assigned)
+			saved_records.append(rec)
+			# marcar operação de criação para este registro
+			if 'operacoes' not in locals():
+				operacoes = []
+			operacoes.append('created')
+
+		# montar objeto para salvar (preservar wrapper quando existir)
+		if wrapped is not None:
+			wrapped['mapas'] = mapas_list
+			to_write = wrapped
+		else:
+			to_write = mapas_list
+
+		ok = _save_mapas_data(to_write)
+		if not ok:
+			return {'success': False, 'error': 'Erro ao salvar mapas'}
+		# Retorno enriquecido: id(s) e registro(s) salvos
+		if len(saved_records) == 1:
+			ret = {'success': True, 'id': saved_records[0]['id'], 'registro': saved_records[0]}
+			if 'operacoes' in locals() and isinstance(operacoes, list) and len(operacoes) == 1:
+				ret['operacao'] = operacoes[0]
+			return ret
+		# múltiplos registros: incluir lista de operações paralela aos ids/registros
+		ret = {'success': True, 'ids': saved_ids, 'registros': saved_records}
+		if 'operacoes' in locals() and isinstance(operacoes, list):
+			ret['operacoes'] = operacoes
+		return ret
+	except Exception:
+		return {'success': False, 'error': 'Erro ao salvar mapas'}
