@@ -18,7 +18,10 @@ from functions.utils import (
     _load_unidades_data,
     carregar_lotes_para_dashboard,
     normalizar_precos,
-    salvar_mapas_raw
+    salvar_mapas_raw,
+    calcular_metricas_lotes,
+    preparar_dados_entrada_manual,
+    reordenar_registro_mapas
 )
 
 app = Flask(__name__)
@@ -148,6 +151,7 @@ def logout():
 
 @app.route('/api/novo-lote', methods=['POST'])
 def api_novo_lote():
+    # Endpoint para salvar um novo lote via API
     try:
         data = request.get_json(force=True, silent=True) or {}
         res = salvar_novo_lote(data)
@@ -160,10 +164,7 @@ def api_novo_lote():
 
 @app.route('/dashboard')
 def dashboard():
-    """Renderiza o dashboard com dados mínimos quando chamados.
-    Para exibir a notificação de login bem-sucedido, o login redireciona para
-    /dashboard?login=1 e aqui mapeamos isso para `mostrar_login_sucesso=True`.
-    """
+    #Página do dashboard
     mostrar_login_sucesso = request.args.get('login') == '1'
     usuario_nome = session.get('usuario_nome', '')
     dashboard_data = carregar_lotes_para_dashboard()
@@ -180,69 +181,8 @@ def lotes():
     lotes = data.get('lotes', [])
     mapas = data.get('mapas_dados', [])
 
-    # calcular meses cadastrados por lote: conjunto único de (mes, ano)
-    from collections import defaultdict
-    meses_por_lote = defaultdict(set)
-    for m in (mapas or []):
-        try:
-            lote_id = int(m.get('lote_id'))
-        except Exception:
-            continue
-        mes = m.get('mes') or m.get('month') or m.get('mes_num') or m.get('month_num')
-        ano = m.get('ano') or m.get('year')
-        # tentar extrair mês/ano a partir de datas quando faltarem
-        if (mes is None or ano is None) and isinstance(m.get('datas'), list) and len(m.get('datas')) > 0:
-            try:
-                # formato esperado DD/MM/YYYY
-                parts = str(m.get('datas')[0]).split('/')
-                if len(parts) >= 3:
-                    mes = int(parts[1])
-                    ano = int(parts[2])
-            except Exception:
-                pass
-        try:
-            mes_i = int(mes)
-            ano_i = int(ano)
-        except Exception:
-            # não foi possível extrair mês/ano válidos
-            continue
-        meses_por_lote[lote_id].add((mes_i, ano_i))
-        # acumular refeições totais por lote (usar campo pré-calculado do mapa quando disponível)
-        try:
-            total = int(m.get('refeicoes_mes') or 0)
-        except Exception:
-            try:
-                total = int(float(m.get('refeicoes_mes') or 0))
-            except Exception:
-                total = 0
-        # usar defaultdict later; build a dict local
-        if 'totais_refeicoes_por_lote' not in locals():
-            totais_refeicoes_por_lote = {}
-        totais_refeicoes_por_lote[lote_id] = totais_refeicoes_por_lote.get(lote_id, 0) + total
-
-    # anexar metas calculadas a cada lote (valores default para template)
-    for l in lotes:
-        try:
-            lid = int(l.get('id'))
-        except Exception:
-            lid = None
-        count = len(meses_por_lote.get(lid, set())) if lid is not None else 0
-        l['meses_cadastrados'] = count
-        # calcular média mensal (total refeicoes / meses_cadastrados)
-        total_ref = 0
-        if lid is not None and 'totais_refeicoes_por_lote' in locals():
-            total_ref = int(totais_refeicoes_por_lote.get(lid, 0) or 0)
-        avg = 0
-        if count > 0:
-            try:
-                avg = int(round(float(total_ref) / float(count)))
-            except Exception:
-                avg = 0
-        l['refeicoes_mes'] = avg
-        if 'custo_mes' not in l:
-            l['custo_mes'] = 0.0
-        if 'desvio_mes' not in l:
-            l['desvio_mes'] = 0.0
+    # calcular métricas dos lotes usando função utilitária
+    calcular_metricas_lotes(lotes, mapas)
 
     empresas = []
     seen = set()
@@ -297,12 +237,9 @@ def api_adicionar_dados():
     try:
         data = request.get_json(force=True, silent=True)
         res = salvar_mapas_raw(data)
-        # Retornar sempre 200 OK com formato { success: bool, ... } para o frontend
         if res.get('success'):
-            # Preferir retornar o registro salvo (possivelmente com id atribuído) quando disponível
             registro = res.get('registro') if res.get('registro') is not None else data
             extra_id = res.get('id')
-            # Derivar uma validação simples a partir do registro salvo (linhas/colunas_count quando disponíveis)
             registros_processados = 0
             dias_esperados = 0
             try:
@@ -325,7 +262,49 @@ def api_adicionar_dados():
                 'mensagem_geral': 'Dados salvos'
             }
 
-            # incluir operação (created/overwritten) quando fornecida pelo saver
+            operacao = res.get('operacao')
+            if not operacao and isinstance(res.get('operacoes'), list) and len(res.get('operacoes')) == 1:
+                operacao = res.get('operacoes')[0]
+
+            resp = {'success': True, 'registro': registro, 'validacao': validacao}
+            if extra_id is not None:
+                resp['id'] = extra_id
+            if operacao is not None:
+                resp['operacao'] = operacao
+            return jsonify(resp), 200
+        else:
+            return jsonify({'success': False, 'error': res.get('error', 'Erro ao salvar')}), 200
+    except Exception:
+        return jsonify({'success': False, 'error': 'Erro interno'}), 200
+
+@app.route('/api/entrada-manual', methods=['POST'])
+def api_entrada_manual():
+    try:
+        data = request.get_json(force=True, silent=True) or {}
+        
+        dados_preparados = preparar_dados_entrada_manual(data)
+        if not dados_preparados.get('success'):
+            return jsonify({'success': False, 'error': dados_preparados.get('error', 'Erro ao preparar dados')}), 200
+        
+        res = salvar_mapas_raw(dados_preparados['data'])
+        
+        if res.get('success'):
+            registro = res.get('registro') if res.get('registro') is not None else dados_preparados['data']
+            extra_id = res.get('id')
+            
+            reordenar_registro_mapas(extra_id)
+            
+            dias_esperados = len(registro.get('datas', []))
+            
+            validacao = {
+                'valido': True,
+                'refeicoes': {
+                    'registros_processados': dias_esperados,
+                    'dias_esperados': dias_esperados
+                },
+                'mensagem_geral': 'Dados salvos via entrada manual'
+            }
+
             operacao = res.get('operacao')
             if not operacao and isinstance(res.get('operacoes'), list) and len(res.get('operacoes')) == 1:
                 operacao = res.get('operacoes')[0]
@@ -359,11 +338,6 @@ def revogar_usuario(user_id):
 
 @app.route('/api/excluir-dados', methods=['DELETE'])
 def api_excluir_dados():
-    return jsonify({'ok': True})
-
-
-@app.route('/api/entrada-manual', methods=['POST'])
-def api_entrada_manual():
     return jsonify({'ok': True})
 
 

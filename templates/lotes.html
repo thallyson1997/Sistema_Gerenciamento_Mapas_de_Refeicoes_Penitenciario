@@ -149,15 +149,15 @@
                                 <!-- Estatísticas do Lote (simuladas) -->
                                 <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 1rem;">
                                     <div style="text-align: center; padding: 1rem; background-color: var(--gray-50); border-radius: var(--border-radius);">
-                                        <div style="font-size: 1.25rem; font-weight: 600; color: var(--primary-color);">{{ lote.refeicoes_mes }}</div>
+                                        <div style="font-size: 1.25rem; font-weight: 600; color: var(--primary-color);">{{ "{:,.2f}".format(lote.refeicoes_mes).replace(',', 'X').replace('.', ',').replace('X', '.') }}</div>
                                         <div style="font-size: 0.75rem; color: var(--gray-600);">Refeições/Mês</div>
                                     </div>
                                     <div style="text-align: center; padding: 1rem; background-color: var(--gray-50); border-radius: var(--border-radius);">
-                                        <div style="font-size: 1.25rem; font-weight: 600; color: var(--success-color);">R$ {{ '%.2f'|format(lote.custo_mes) }}</div>
+                                        <div style="font-size: 1.25rem; font-weight: 600; color: var(--success-color);">R$ {{ "{:,.2f}".format(lote.custo_mes).replace(',', 'X').replace('.', ',').replace('X', '.') }}</div>
                                         <div style="font-size: 0.75rem; color: var(--gray-600);">Custo/Mês</div>
                                     </div>
                                     <div style="text-align: center; padding: 1rem; background-color: var(--gray-50); border-radius: var(--border-radius);">
-                                        <div style="font-size: 1.25rem; font-weight: 600; color: var(--warning-color);">R$ {{ '%.2f'|format(lote.desvio_mes) }}</div>
+                                        <div style="font-size: 1.25rem; font-weight: 600; color: var(--warning-color);">R$ {{ "{:,.2f}".format(lote.desvio_mes).replace(',', 'X').replace('.', ',').replace('X', '.') }}</div>
                                         <div style="font-size: 0.75rem; color: var(--gray-600);">Desvio/Mês</div>
                                     </div>
                                     <div style="text-align: center; padding: 1rem; background-color: var(--gray-50); border-radius: var(--border-radius);">

@@ -906,6 +906,137 @@ def _validate_map_day_lengths(entry):
 
 
 # ----- Dashboard loader (reusable) -----
+def calcular_metricas_lotes(lotes, mapas):
+	"""Calcula métricas agregadas para cada lote baseado nos mapas associados.
+	
+	Modifica os lotes in-place adicionando os campos:
+	- meses_cadastrados: número de meses únicos com dados
+	- refeicoes_mes: média de refeições por mês
+	- custo_mes: custo médio por mês
+	- desvio_mes: placeholder (0.0)
+	
+	Args:
+		lotes: lista de dicionários representando os lotes
+		mapas: lista de dicionários representando os mapas de refeições
+	"""
+	from collections import defaultdict
+	
+	# calcular meses cadastrados por lote: conjunto único de (mes, ano)
+	meses_por_lote = defaultdict(set)
+	totais_refeicoes_por_lote = {}
+	totais_custos_por_lote = {}
+	
+	for m in (mapas or []):
+		try:
+			lote_id = int(m.get('lote_id'))
+		except Exception:
+			continue
+		
+		mes = m.get('mes') or m.get('month') or m.get('mes_num') or m.get('month_num')
+		ano = m.get('ano') or m.get('year')
+		
+		# tentar extrair mês/ano a partir de datas quando faltarem
+		if (mes is None or ano is None) and isinstance(m.get('datas'), list) and len(m.get('datas')) > 0:
+			try:
+				# formato esperado DD/MM/YYYY
+				parts = str(m.get('datas')[0]).split('/')
+				if len(parts) >= 3:
+					mes = int(parts[1])
+					ano = int(parts[2])
+			except Exception:
+				pass
+		
+		try:
+			mes_i = int(mes)
+			ano_i = int(ano)
+		except Exception:
+			# não foi possível extrair mês/ano válidos
+			continue
+		
+		meses_por_lote[lote_id].add((mes_i, ano_i))
+		
+		# acumular refeições totais por lote (usar campo pré-calculado do mapa quando disponível)
+		try:
+			total = int(m.get('refeicoes_mes') or 0)
+		except Exception:
+			try:
+				total = int(float(m.get('refeicoes_mes') or 0))
+			except Exception:
+				total = 0
+		
+		totais_refeicoes_por_lote[lote_id] = totais_refeicoes_por_lote.get(lote_id, 0) + total
+		
+		# acumular custos totais por lote
+		custo_mapa = 0.0
+		# calcular custo do mapa atual multiplicando quantidades por preços
+		# buscar o lote correspondente para obter os preços
+		lote_do_mapa = None
+		for l_temp in lotes:
+			try:
+				if int(l_temp.get('id')) == lote_id:
+					lote_do_mapa = l_temp
+					break
+			except Exception:
+				continue
+		
+		if lote_do_mapa and isinstance(lote_do_mapa.get('precos'), dict):
+			precos = lote_do_mapa.get('precos', {})
+			# somar todos os tipos de refeição (cafe, almoco, lanche, jantar) x (interno, funcionario)
+			meal_fields = [
+				('cafe_interno', precos.get('cafe', {}).get('interno', 0)),
+				('cafe_funcionario', precos.get('cafe', {}).get('funcionario', 0)),
+				('almoco_interno', precos.get('almoco', {}).get('interno', 0)),
+				('almoco_funcionario', precos.get('almoco', {}).get('funcionario', 0)),
+				('lanche_interno', precos.get('lanche', {}).get('interno', 0)),
+				('lanche_funcionario', precos.get('lanche', {}).get('funcionario', 0)),
+				('jantar_interno', precos.get('jantar', {}).get('interno', 0)),
+				('jantar_funcionario', precos.get('jantar', {}).get('funcionario', 0))
+			]
+			
+			for field_name, preco_unitario in meal_fields:
+				if field_name in m:
+					try:
+						quantidade = sum(int(x or 0) for x in m[field_name] if x is not None)
+						custo_mapa += quantidade * float(preco_unitario or 0)
+					except Exception:
+						pass
+		
+		totais_custos_por_lote[lote_id] = totais_custos_por_lote.get(lote_id, 0.0) + custo_mapa
+	
+	# anexar métricas calculadas a cada lote
+	for l in lotes:
+		try:
+			lid = int(l.get('id'))
+		except Exception:
+			lid = None
+		
+		count = len(meses_por_lote.get(lid, set())) if lid is not None else 0
+		l['meses_cadastrados'] = count
+		
+		# calcular média mensal de refeições (total refeicoes / meses_cadastrados)
+		total_ref = totais_refeicoes_por_lote.get(lid, 0) if lid is not None else 0
+		avg = 0.0
+		if count > 0:
+			try:
+				avg = round(float(total_ref) / float(count), 2)
+			except Exception:
+				avg = 0.0
+		l['refeicoes_mes'] = avg
+		
+		# calcular custo médio mensal (total custos / meses_cadastrados)
+		total_custo = totais_custos_por_lote.get(lid, 0.0) if lid is not None else 0.0
+		avg_custo = 0.0
+		if count > 0:
+			try:
+				avg_custo = round(total_custo / float(count), 2)
+			except Exception:
+				avg_custo = 0.0
+		l['custo_mes'] = avg_custo
+		
+		if 'desvio_mes' not in l:
+			l['desvio_mes'] = 0.0
+
+
 def carregar_lotes_para_dashboard():
 	"""Carrega e normaliza os lotes e unidades para uso no dashboard.
 
@@ -1114,6 +1245,64 @@ def carregar_lotes_para_dashboard():
 						pass
 			total_refeicoes += vals
 
+		# Processar dados SIISP e calcular diferenças
+		n_siisp = _coerce_list('n_siisp')  # Array de números SIISP por dia
+		
+		# Se não há n_siisp mas há dados_siisp, tentar extrair números SIISP de dados_siisp
+		if not n_siisp and dados_siisp:
+			n_siisp = dados_siisp  # dados_siisp pode conter os números SIISP
+		
+		# Calcular diferenças SIISP para internos (refeições - n_siisp)
+		cafe_interno_siisp = []
+		almoco_interno_siisp = []
+		lanche_interno_siisp = []
+		jantar_interno_siisp = []
+		
+		# Calcular diferenças SIISP para funcionários (funcionarios - 0, já que SIISP não conta funcionários)
+		cafe_funcionario_siisp = []
+		almoco_funcionario_siisp = []
+		lanche_funcionario_siisp = []
+		jantar_funcionario_siisp = []
+		
+		if n_siisp:
+			for i in range(max(len(n_siisp), n_days)):
+				# Obter valores para o dia i
+				siisp_dia = n_siisp[i] if i < len(n_siisp) and n_siisp[i] is not None else 0
+				
+				# Diferenças para internos (positivo = mais refeições que internos SIISP)
+				cafe_int_dia = cafe_interno[i] if i < len(cafe_interno) and cafe_interno[i] is not None else 0
+				almoco_int_dia = almoco_interno[i] if i < len(almoco_interno) and almoco_interno[i] is not None else 0
+				lanche_int_dia = lanche_interno[i] if i < len(lanche_interno) and lanche_interno[i] is not None else 0
+				jantar_int_dia = jantar_interno[i] if i < len(jantar_interno) and jantar_interno[i] is not None else 0
+				
+				try:
+					cafe_interno_siisp.append(int(cafe_int_dia) - int(siisp_dia))
+					almoco_interno_siisp.append(int(almoco_int_dia) - int(siisp_dia))
+					lanche_interno_siisp.append(int(lanche_int_dia) - int(siisp_dia))
+					jantar_interno_siisp.append(int(jantar_int_dia) - int(siisp_dia))
+				except Exception:
+					cafe_interno_siisp.append(0)
+					almoco_interno_siisp.append(0)
+					lanche_interno_siisp.append(0)
+					jantar_interno_siisp.append(0)
+				
+				# Para funcionários, diferença é simplesmente o número de funcionários (SIISP = 0 para funcionários)
+				cafe_func_dia = cafe_funcionario[i] if i < len(cafe_funcionario) and cafe_funcionario[i] is not None else 0
+				almoco_func_dia = almoco_funcionario[i] if i < len(almoco_funcionario) and almoco_funcionario[i] is not None else 0
+				lanche_func_dia = lanche_funcionario[i] if i < len(lanche_funcionario) and lanche_funcionario[i] is not None else 0
+				jantar_func_dia = jantar_funcionario[i] if i < len(jantar_funcionario) and jantar_funcionario[i] is not None else 0
+				
+				try:
+					cafe_funcionario_siisp.append(int(cafe_func_dia))
+					almoco_funcionario_siisp.append(int(almoco_func_dia))
+					lanche_funcionario_siisp.append(int(lanche_func_dia))
+					jantar_funcionario_siisp.append(int(jantar_func_dia))
+				except Exception:
+					cafe_funcionario_siisp.append(0)
+					almoco_funcionario_siisp.append(0)
+					lanche_funcionario_siisp.append(0)
+					jantar_funcionario_siisp.append(0)
+
 		mapa_obj = {
 			'id': m.get('id'),
 			'lote_id': lote_id,
@@ -1132,6 +1321,15 @@ def carregar_lotes_para_dashboard():
 			'jantar_interno': jantar_interno,
 			'jantar_funcionario': jantar_funcionario,
 			'dados_siisp': dados_siisp,
+			'n_siisp': n_siisp,  # Array de números SIISP
+			'cafe_interno_siisp': cafe_interno_siisp,
+			'almoco_interno_siisp': almoco_interno_siisp,
+			'lanche_interno_siisp': lanche_interno_siisp,
+			'jantar_interno_siisp': jantar_interno_siisp,
+			'cafe_funcionario_siisp': cafe_funcionario_siisp,
+			'almoco_funcionario_siisp': almoco_funcionario_siisp,
+			'lanche_funcionario_siisp': lanche_funcionario_siisp,
+			'jantar_funcionario_siisp': jantar_funcionario_siisp,
 			'refeicoes_mes': total_refeicoes,
 			'criado_em': m.get('criado_em'),
 			'atualizado_em': m.get('atualizado_em')
@@ -1516,3 +1714,168 @@ def salvar_mapas_raw(payload):
 		return ret
 	except Exception:
 		return {'success': False, 'error': 'Erro ao salvar mapas'}
+
+
+def preparar_dados_entrada_manual(data):
+	"""Prepara dados de entrada manual para salvamento.
+	
+	Converte formato tabular, normaliza arrays, gera datas e adiciona metadados necessários.
+	
+	Retorna: {'success': True, 'data': dados_preparados} ou {'success': False, 'error': '...'}
+	"""
+	try:
+		if not isinstance(data, dict):
+			return {'success': False, 'error': 'Dados inválidos'}
+		
+		# Clonar dados para não modificar original
+		import copy
+		processed = copy.deepcopy(data)
+		
+		# Campos de refeições
+		meal_fields = [
+			'cafe_interno', 'cafe_funcionario',
+			'almoco_interno', 'almoco_funcionario', 
+			'lanche_interno', 'lanche_funcionario',
+			'jantar_interno', 'jantar_funcionario'
+		]
+		
+		# Verificar se os dados vêm no formato tabular (dados_tabela) e converter
+		if 'dados_tabela' in processed and isinstance(processed['dados_tabela'], list):
+			tabela = processed['dados_tabela']
+			
+			# Criar arrays vazios
+			for field in meal_fields:
+				processed[field] = []
+			
+			# Converter cada dia da tabela para arrays
+			for dia_data in tabela:
+				for field in meal_fields:
+					valor = dia_data.get(field, 0)
+					try:
+						valor_int = int(valor) if valor is not None and valor != '' else 0
+					except (ValueError, TypeError):
+						valor_int = 0
+					processed[field].append(valor_int)
+			
+			# Remover o campo dados_tabela (não é necessário)
+			del processed['dados_tabela']
+		
+		else:
+			# Normalizar arrays vazios/nulos para 0 (formato direto)
+			def normalizar_array(arr):
+				if not isinstance(arr, list):
+					return []
+				normalized = []
+				for item in arr:
+					if item is None or item == '' or item == 'null':
+						normalized.append(0)
+					else:
+						try:
+							normalized.append(int(item))
+						except (ValueError, TypeError):
+							normalized.append(0)
+				return normalized
+			
+			for field in meal_fields:
+				if field in processed:
+					processed[field] = normalizar_array(processed.get(field))
+		
+		# Determinar número de dias baseado no maior array
+		max_days = 0
+		for field in meal_fields:
+			if field in processed and isinstance(processed[field], list):
+				max_days = max(max_days, len(processed[field]))
+		
+		# Gerar array de datas baseado em mes/ano e max_days
+		mes = processed.get('mes')
+		ano = processed.get('ano')
+		datas = []
+		
+		if mes and ano:
+			try:
+				mes = int(mes)
+				ano = int(ano)
+				days_in_month = calendar.monthrange(ano, mes)[1]
+				# Usar o menor entre max_days e dias no mês
+				num_days = min(max_days, days_in_month) if max_days > 0 else days_in_month
+				
+				for dia in range(1, num_days + 1):
+					data_str = f"{dia:02d}/{mes:02d}/{ano}"
+					datas.append(data_str)
+			except:
+				# Fallback: gerar datas baseado apenas em max_days
+				for dia in range(1, max_days + 1):
+					data_str = f"{dia:02d}/01/2025"  # fallback genérico
+					datas.append(data_str)
+		
+		# Adicionar campos de estrutura completa
+		processed['datas'] = datas
+		processed['linhas'] = len(datas)
+		processed['colunas_count'] = 9  # Sempre 9 colunas (tipos de refeição)
+		
+		# Adicionar timestamp de criação
+		processed['criado_em'] = datetime.now().isoformat()
+		
+		# Garantir que dados_siisp existe como array vazio
+		if 'dados_siisp' not in processed:
+			processed['dados_siisp'] = []
+		
+		return {'success': True, 'data': processed}
+		
+	except Exception as e:
+		return {'success': False, 'error': f'Erro ao preparar dados: {str(e)}'}
+
+
+def reordenar_registro_mapas(registro_id):
+	"""Reordena um registro específico no arquivo mapas.json para garantir ordem correta dos campos.
+	
+	Args:
+		registro_id: ID do registro a ser reordenado
+	
+	Retorna: True se sucesso, False se erro
+	"""
+	try:
+		base_dir = os.path.dirname(os.path.dirname(__file__))
+		mapas_file = os.path.join(base_dir, 'dados', 'mapas.json')
+		
+		if not os.path.exists(mapas_file):
+			return False
+		
+		with open(mapas_file, 'r', encoding='utf-8') as f:
+			mapas_data = json.load(f)
+		
+		if not isinstance(mapas_data, list):
+			return False
+		
+		# Encontrar e reordenar o registro específico
+		for i, mapa in enumerate(mapas_data):
+			if isinstance(mapa, dict) and mapa.get('id') == registro_id:
+				# Ordem específica dos campos
+				field_order = [
+					'lote_id', 'mes', 'ano', 'unidade', 'dados_siisp', 'linhas', 'colunas_count',
+					'cafe_interno', 'cafe_funcionario', 'almoco_interno', 'almoco_funcionario',
+					'lanche_interno', 'lanche_funcionario', 'jantar_interno', 'jantar_funcionario',
+					'datas', 'id', 'criado_em', 'atualizado_em'
+				]
+				
+				ordered_data = {}
+				for field in field_order:
+					if field in mapa:
+						ordered_data[field] = mapa[field]
+				
+				# Adicionar campos não listados
+				for field, value in mapa.items():
+					if field not in ordered_data:
+						ordered_data[field] = value
+				
+				mapas_data[i] = ordered_data
+				break
+		
+		# Salvar arquivo reordenado
+		with open(mapas_file, 'w', encoding='utf-8') as f:
+			json.dump(mapas_data, f, indent=2, ensure_ascii=False)
+		
+		return True
+		
+	except Exception:
+		return False
