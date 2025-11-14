@@ -57,9 +57,7 @@ def cadastro():
 
 @app.route('/api/validar-campo', methods=['POST'])
 def api_validar_campo():
-    """Endpoint simples para validação de campos em tempo real.
-    Retorna JSON: { 'valido': True, 'mensagem': 'OK' } por enquanto.
-    """
+    # Endpoint para validação de campos via API
     try:
         data = request.get_json(force=True, silent=True) or {}
         campo = data.get('campo')

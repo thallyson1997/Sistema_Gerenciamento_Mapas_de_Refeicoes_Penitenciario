@@ -1277,22 +1277,32 @@
         const dadosOriginais = []; // Manter cópia dos dados originais
         
         mapasLote.forEach(mapa => {
+            // Verificar qual campo de datas usar (compatibilidade)
+            let datasArray = mapa.datas || mapa.data;
+            let nomeUnidade = mapa.unidade || mapa.nome_unidade;
+            
+            if (!datasArray || !Array.isArray(datasArray)) {
+                return; // Skip este mapa se não tiver dados válidos
+            }
+            
             // Para cada dia do mês
-            for (let i = 0; i < mapa.data.length; i++) {
+            for (let i = 0; i < datasArray.length; i++) {
                 const registro = {
-                    data: mapa.data[i],
-                    unidade: mapa.nome_unidade,
-                    cafeInt: mapa.cafe_interno[i],
-                    cafeFunc: mapa.cafe_funcionario[i],
-                    almocoInt: mapa.almoco_interno[i],
-                    almocoFunc: mapa.almoco_funcionario[i],
-                    lancheInt: mapa.lanche_interno[i],
-                    lancheFunc: mapa.lanche_funcionario[i],
-                    jantarInt: mapa.jantar_interno[i],
-                    jantarFunc: mapa.jantar_funcionario[i],
-                    // Dados SIISP - usar n_siisp se disponível, senão 0
-                    siispInternos: (mapa.n_siisp && mapa.n_siisp.length > i) ? mapa.n_siisp[i] : 0,
-                    temSiisp: (mapa.n_siisp && mapa.n_siisp.length > 0) || 
+                    data: datasArray[i],
+                    unidade: nomeUnidade,
+                    cafeInt: (mapa.cafe_interno && mapa.cafe_interno[i]) || 0,
+                    cafeFunc: (mapa.cafe_funcionario && mapa.cafe_funcionario[i]) || 0,
+                    almocoInt: (mapa.almoco_interno && mapa.almoco_interno[i]) || 0,
+                    almocoFunc: (mapa.almoco_funcionario && mapa.almoco_funcionario[i]) || 0,
+                    lancheInt: (mapa.lanche_interno && mapa.lanche_interno[i]) || 0,
+                    lancheFunc: (mapa.lanche_funcionario && mapa.lanche_funcionario[i]) || 0,
+                    jantarInt: (mapa.jantar_interno && mapa.jantar_interno[i]) || 0,
+                    jantarFunc: (mapa.jantar_funcionario && mapa.jantar_funcionario[i]) || 0,
+                    // Dados SIISP - usar dados_siisp ou n_siisp se disponível, senão 0
+                    siispInternos: (mapa.dados_siisp && mapa.dados_siisp.length > i) ? mapa.dados_siisp[i] : 
+                                  (mapa.n_siisp && mapa.n_siisp.length > i) ? mapa.n_siisp[i] : 0,
+                    temSiisp: (mapa.dados_siisp && mapa.dados_siisp.length > 0) || 
+                              (mapa.n_siisp && mapa.n_siisp.length > 0) ||
                               (mapa.cafe_interno_siisp && mapa.cafe_interno_siisp.length > 0),
                     // Dados SIISP dos internos (colunas calculadas)
                     cafeIntSiisp: (mapa.cafe_interno_siisp && mapa.cafe_interno_siisp.length > i) ? mapa.cafe_interno_siisp[i] : null,
@@ -1800,41 +1810,26 @@
                 // Usar dados reais do SIISP ou 0 se não disponível
                 const siisp = row.siispInternos || 0;
                 
-                // Verificar se há colunas SIISP calculadas (mesmo com n_siisp = 0)
+                // Verificar se há colunas SIISP calculadas
                 const temColunasSiisp = row.cafeIntSiisp !== null && row.cafeIntSiisp !== undefined;
                 const statusSiisp = temColunasSiisp ? 'Calculado' : 'Não disponível';
                 
-                // USAR COLUNAS _SIISP JÁ CALCULADAS em vez de calcular manualmente
+                // Café Interno - usar dados calculados do backend se disponíveis
                 const cafeClass = temColunasSiisp ? 
-                    getClassificacaoSiisp(row.cafeIntSiisp) : { class: 'cell-na', display: 'N/A' };
-                const almocoClass = temColunasSiisp ? 
-                    getClassificacaoSiisp(row.almocoIntSiisp) : { class: 'cell-na', display: 'N/A' };
-                const lancheClass = temColunasSiisp ? 
-                    getClassificacaoSiisp(row.lancheIntSiisp) : { class: 'cell-na', display: 'N/A' };
-                const jantarClass = temColunasSiisp ? 
-                    getClassificacaoSiisp(row.jantarIntSiisp) : { class: 'cell-na', display: 'N/A' };
+                    getClassificacaoSiisp(row.cafeIntSiisp) : 
+                    { class: 'cell-na', display: 'N/A' };
+                
+                // Outras refeições ainda vão mostrar N/A por enquanto
+                const almocoClass = { class: 'cell-na', display: 'N/A' };
+                const lancheClass = { class: 'cell-na', display: 'N/A' };
+                const jantarClass = { class: 'cell-na', display: 'N/A' };
 
-                // Função para formatar células de funcionários SIISP
+                // Função para formatar células de funcionários SIISP - FORÇAR N/A
                 function formatarCelulaFuncSiisp(valorFunc, valorSiisp) {
-                    if (valorSiisp === null || valorSiisp === undefined) {
-                        return {
-                            style: 'text-align: center; background-color: var(--gray-200); color: var(--gray-500);',
-                            value: 'N/A'
-                        };
-                    }
-                    
-                    // Para funcionários SIISP: valores negativos são normais (verde com "OK"), valores > 0 são problemáticos (vermelho com número)
-                    if (valorSiisp > 0) {
-                        return {
-                            style: 'text-align: center; background-color: var(--danger-color); color: white; font-weight: 600;',
-                            value: `+${valorSiisp}`
-                        };
-                    } else {
-                        return {
-                            style: 'text-align: center; background-color: var(--success-color); color: white; font-weight: 600;',
-                            value: 'OK'
-                        };
-                    }
+                    return {
+                        style: 'text-align: center; background-color: var(--gray-200); color: var(--gray-500);',
+                        value: 'N/A'
+                    };
                 }
 
                 const cafeFuncStyle = formatarCelulaFuncSiisp(row.cafeFunc, row.cafeFuncSiisp);
@@ -1845,8 +1840,8 @@
                 tr.innerHTML = `
                     <td>${row.data}</td>
                     <td>${row.unidade}</td>
-                    <td style="text-align: center; font-weight: 600; background-color: ${temColunasSiisp ? 'var(--success-light)' : 'var(--gray-100)'}; color: ${temColunasSiisp ? 'var(--success-color)' : 'var(--gray-500)'}">
-                        ${temColunasSiisp ? (siisp > 0 ? siisp : '') : 'N/A'}
+                    <td style="text-align: center; font-weight: 600; background-color: var(--gray-100);">
+                        ${siisp}
                     </td>
                     <td class="${cafeClass.class}" style="text-align: center;">
                         ${cafeClass.display}
@@ -1884,7 +1879,7 @@
 
         // Nova função para classificar baseada nos valores _siisp já calculados
         function getClassificacaoSiisp(valorSiisp) {
-            // valorSiisp já é a diferença (refeicoes - n_siisp)
+            // valorSiisp já é a diferença (refeicoes - dados_siisp)
             if (valorSiisp <= 0) {
                 return { class: 'cell-ok', display: 'OK' };
             } else if (valorSiisp <= 5) {

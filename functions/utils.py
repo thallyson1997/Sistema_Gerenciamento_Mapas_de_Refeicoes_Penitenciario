@@ -9,6 +9,76 @@ except Exception:
 import calendar
 
 
+# ----- SIISP Comparison Helpers -----
+def _calcular_campos_comparativos_siisp(record):
+	"""Calcula campos comparativos SIISP para um registro de mapa.
+	
+	Calcula:
+	- cafe_interno_siisp = cafe_interno - dados_siisp
+	- cafe_funcionario_siisp = cafe_funcionario - dados_siisp
+	- almoco_interno_siisp = almoco_interno - dados_siisp
+	- almoco_funcionario_siisp = almoco_funcionario - dados_siisp
+	- lanche_interno_siisp = lanche_interno - dados_siisp
+	- lanche_funcionario_siisp = lanche_funcionario - dados_siisp
+	- jantar_interno_siisp = jantar_interno - dados_siisp
+	- jantar_funcionario_siisp = jantar_funcionario - dados_siisp
+	
+	Modifica o record in-place adicionando esses campos.
+	"""
+	if not isinstance(record, dict):
+		return
+	
+	# Campos de refeições
+	meal_fields = [
+		'cafe_interno', 'cafe_funcionario',
+		'almoco_interno', 'almoco_funcionario', 
+		'lanche_interno', 'lanche_funcionario',
+		'jantar_interno', 'jantar_funcionario'
+	]
+	
+	# Obter dados_siisp
+	dados_siisp = record.get('dados_siisp', [])
+	if not isinstance(dados_siisp, list):
+		dados_siisp = []
+	
+	# Para cada campo de refeição, calcular a diferença
+	for field in meal_fields:
+		field_data = record.get(field, [])
+		if not isinstance(field_data, list):
+			field_data = []
+		
+		# Campo comparativo correspondente
+		siisp_field = f"{field}_siisp"
+		
+		# Calcular diferenças
+		comparativo = []
+		max_len = max(len(field_data), len(dados_siisp))
+		
+		for i in range(max_len):
+			# Valor da refeição (0 se índice não existir)
+			refeicao_val = field_data[i] if i < len(field_data) else 0
+			# Valor SIISP (0 se índice não existir)
+			siisp_val = dados_siisp[i] if i < len(dados_siisp) else 0
+			
+			# Garantir que são números
+			try:
+				refeicao_num = int(refeicao_val) if refeicao_val is not None else 0
+			except (ValueError, TypeError):
+				refeicao_num = 0
+			
+			try:
+				siisp_num = int(siisp_val) if siisp_val is not None else 0
+			except (ValueError, TypeError):
+				siisp_num = 0
+			
+			# Calcular diferença
+			diferenca = refeicao_num - siisp_num
+			comparativo.append(diferenca)
+		
+		# Adicionar campo comparativo ao record
+		record[siisp_field] = comparativo
+
+
 # ----- Security / Password helpers -----
 def _hash_password(senha):
 	"""Retorna o hash bcrypt da senha (string). Se bcrypt não estiver disponível, retorna a senha em texto (fallback)."""
@@ -1562,10 +1632,25 @@ def salvar_mapas_raw(payload):
 				# garantir que sempre exista lista em dados_siisp
 				if 'dados_siisp' not in rec or rec.get('dados_siisp') is None:
 					rec['dados_siisp'] = []
+				
+				# Se dados_siisp estiver vazio, preencher com zeros baseado no número de dias do mês
+				if not rec.get('dados_siisp') or len(rec.get('dados_siisp', [])) == 0:
+					try:
+						mes_num = int(rec.get('mes') or datetime.now().month)
+						ano_num = int(rec.get('ano') or datetime.now().year)
+						dias_no_mes = calendar.monthrange(ano_num, mes_num)[1]
+						rec['dados_siisp'] = [0] * dias_no_mes
+					except Exception:
+						# Fallback: usar 31 dias se não conseguir calcular
+						rec['dados_siisp'] = [0] * 31
 				# preservar criado_em se houver, e anotar atualizado_em
 				if 'criado_em' not in rec and matched_record.get('criado_em'):
 					rec['criado_em'] = matched_record.get('criado_em')
 				rec['atualizado_em'] = datetime.now().isoformat()
+				
+				# Calcular campos comparativos SIISP
+				_calcular_campos_comparativos_siisp(rec)
+				
 				# validar comprimentos das listas diárias antes de sobrescrever
 				valid_ok, valid_msg = _validate_map_day_lengths(rec)
 				if not valid_ok:
@@ -1679,6 +1764,21 @@ def salvar_mapas_raw(payload):
 			# garantir lista vazia quando não enviado
 			if 'dados_siisp' not in rec or rec.get('dados_siisp') is None:
 				rec['dados_siisp'] = []
+			
+			# Se dados_siisp estiver vazio, preencher com zeros baseado no número de dias do mês
+			if not rec.get('dados_siisp') or len(rec.get('dados_siisp', [])) == 0:
+				try:
+					mes_num = int(rec.get('mes') or datetime.now().month)
+					ano_num = int(rec.get('ano') or datetime.now().year)
+					dias_no_mes = calendar.monthrange(ano_num, mes_num)[1]
+					rec['dados_siisp'] = [0] * dias_no_mes
+				except Exception:
+					# Fallback: usar 31 dias se não conseguir calcular
+					rec['dados_siisp'] = [0] * 31
+			
+			# Calcular campos comparativos SIISP
+			_calcular_campos_comparativos_siisp(rec)
+			
 			# validar comprimentos das listas diárias antes de salvar
 			valid_ok, valid_msg = _validate_map_day_lengths(rec)
 			if not valid_ok:
@@ -1819,6 +1919,20 @@ def preparar_dados_entrada_manual(data):
 		# Garantir que dados_siisp existe como array vazio
 		if 'dados_siisp' not in processed:
 			processed['dados_siisp'] = []
+		
+		# Se dados_siisp estiver vazio, preencher com zeros baseado no número de dias do mês
+		if not processed.get('dados_siisp') or len(processed.get('dados_siisp', [])) == 0:
+			try:
+				mes = int(processed.get('mes') or datetime.now().month)
+				ano = int(processed.get('ano') or datetime.now().year)
+				dias_no_mes = calendar.monthrange(ano, mes)[1]
+				processed['dados_siisp'] = [0] * dias_no_mes
+			except Exception:
+				# Fallback: usar o número de datas geradas
+				processed['dados_siisp'] = [0] * len(datas)
+		
+		# Calcular campos comparativos SIISP
+		_calcular_campos_comparativos_siisp(processed)
 		
 		return {'success': True, 'data': processed}
 		
