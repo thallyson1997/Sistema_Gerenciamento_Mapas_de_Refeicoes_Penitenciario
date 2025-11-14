@@ -1323,18 +1323,20 @@ def carregar_lotes_para_dashboard():
 			n_siisp = dados_siisp  # dados_siisp pode conter os números SIISP
 		
 		# Calcular diferenças SIISP para internos (refeições - n_siisp)
-		cafe_interno_siisp = []
-		almoco_interno_siisp = []
-		lanche_interno_siisp = []
-		jantar_interno_siisp = []
+		# IMPORTANTE: Verificar se os campos já existem no JSON antes de recalcular
+		cafe_interno_siisp = _coerce_list('cafe_interno_siisp') if 'cafe_interno_siisp' in m else []
+		almoco_interno_siisp = _coerce_list('almoco_interno_siisp') if 'almoco_interno_siisp' in m else []
+		lanche_interno_siisp = _coerce_list('lanche_interno_siisp') if 'lanche_interno_siisp' in m else []
+		jantar_interno_siisp = _coerce_list('jantar_interno_siisp') if 'jantar_interno_siisp' in m else []
 		
-		# Calcular diferenças SIISP para funcionários (funcionarios - 0, já que SIISP não conta funcionários)
-		cafe_funcionario_siisp = []
-		almoco_funcionario_siisp = []
-		lanche_funcionario_siisp = []
-		jantar_funcionario_siisp = []
+		# Calcular diferenças SIISP para funcionários
+		cafe_funcionario_siisp = _coerce_list('cafe_funcionario_siisp') if 'cafe_funcionario_siisp' in m else []
+		almoco_funcionario_siisp = _coerce_list('almoco_funcionario_siisp') if 'almoco_funcionario_siisp' in m else []
+		lanche_funcionario_siisp = _coerce_list('lanche_funcionario_siisp') if 'lanche_funcionario_siisp' in m else []
+		jantar_funcionario_siisp = _coerce_list('jantar_funcionario_siisp') if 'jantar_funcionario_siisp' in m else []
 		
-		if n_siisp:
+		# Só recalcular se não existirem no JSON
+		if n_siisp and not cafe_interno_siisp:
 			for i in range(max(len(n_siisp), n_days)):
 				# Obter valores para o dia i
 				siisp_dia = n_siisp[i] if i < len(n_siisp) and n_siisp[i] is not None else 0
@@ -1412,12 +1414,23 @@ def carregar_lotes_para_dashboard():
 def _load_mapas_data():
 	base_dir = os.path.dirname(os.path.dirname(__file__))
 	mapas_path = os.path.join(base_dir, 'dados', 'mapas.json')
+	print(f"🔍 DEBUG: Carregando mapas de: {mapas_path}")
 	if not os.path.isfile(mapas_path):
+		print("❌ Arquivo mapas.json não encontrado!")
 		return None
 	try:
 		with open(mapas_path, 'r', encoding='utf-8') as f:
-			return json.load(f)
-	except Exception:
+			data = json.load(f)
+			# Debug: mostrar primeiro valor de cafe_funcionario_siisp
+			if isinstance(data, list) and len(data) > 0:
+				primeiro_mapa = data[0]
+				if 'cafe_funcionario_siisp' in primeiro_mapa:
+					print(f"✅ Primeiro valor cafe_funcionario_siisp no arquivo: {primeiro_mapa['cafe_funcionario_siisp'][0] if primeiro_mapa['cafe_funcionario_siisp'] else 'VAZIO'}")
+				else:
+					print("⚠️ Campo cafe_funcionario_siisp NÃO EXISTE no JSON!")
+			return data
+	except Exception as e:
+		print(f"❌ Erro ao ler mapas.json: {e}")
 		return None
 
 

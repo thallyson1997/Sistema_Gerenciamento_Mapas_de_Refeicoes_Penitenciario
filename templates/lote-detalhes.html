@@ -1281,6 +1281,14 @@
             let datasArray = mapa.datas || mapa.data;
             let nomeUnidade = mapa.unidade || mapa.nome_unidade;
             
+            // DEBUG: Verificar se campos SIISP de funcionários existem
+            console.log('DEBUG: Verificando mapa:', {
+                unidade: nomeUnidade,
+                temCafeFuncSiisp: !!mapa.cafe_funcionario_siisp,
+                primeiroValorCafeFuncSiisp: mapa.cafe_funcionario_siisp ? mapa.cafe_funcionario_siisp[0] : 'UNDEFINED',
+                primeiroValorCafeFunc: mapa.cafe_funcionario ? mapa.cafe_funcionario[0] : 'UNDEFINED'
+            });
+            
             if (!datasArray || !Array.isArray(datasArray)) {
                 return; // Skip este mapa se não tiver dados válidos
             }
@@ -1835,6 +1843,13 @@
                 const cafeFuncClass = temColunasSiisp ? 
                     getClassificacaoSiisp(row.cafeFuncSiisp) : 
                     { class: 'cell-na', display: 'N/A' };
+                
+                // DEBUG: Log dos primeiros 3 dias para café funcionário
+                if (dadosRefeicoes.indexOf(row) < 3) {
+                    console.log(`DEBUG Dia ${dadosRefeicoes.indexOf(row) + 1}:`);
+                    console.log('  row.cafeFuncSiisp:', row.cafeFuncSiisp);
+                    console.log('  cafeFuncClass:', cafeFuncClass);
+                }
                 
                 const almocoFuncClass = temColunasSiisp ? 
                     getClassificacaoSiisp(row.almocoFuncSiisp) : 
